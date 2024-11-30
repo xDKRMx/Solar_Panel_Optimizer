@@ -107,15 +107,14 @@ class SolarPINN(nn.Module):
         spatial_residual = y_grad[:, 0]**2 + y_grad[:, 1]**2  # Spatial variation
         temporal_residual = y_grad[:, 2]  # Time variation
         physics_residual = y_pred - theoretical_irradiance  # Physics-based prediction
-        # Add physical bounds constraint
-        max_irradiance_residual = torch.relu(y_pred - self.solar_constant * cos_theta)
         boundary_residual = torch.relu(-y_pred)  # Non-negative constraint
+        max_irradiance_residual = torch.relu(y_pred - self.solar_constant)  # Maximum limit
         
         # Dynamic weighting based on training progress
         spatial_weight = 0.2 * torch.exp(-conservation_residual.abs().mean())
         temporal_weight = 0.2 * torch.exp(-temporal_residual.abs().mean())
-        physics_weight = 0.4 * (1 - torch.exp(-physics_residual.abs().mean()))  # Increased from 0.3
-        boundary_weight = 0.3  # Increased from 0.15
+        physics_weight = 0.3 * (1 - torch.exp(-physics_residual.abs().mean()))
+        boundary_weight = 0.15
         conservation_weight = 0.15
 
         # Combine residuals with dynamic weights

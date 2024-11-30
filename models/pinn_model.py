@@ -7,10 +7,16 @@ class SolarPINN(nn.Module):
 
     def __init__(self, input_dim=8):  # Updated for cloud_cover and wavelength
         super(SolarPINN, self).__init__()
-        self.net = nn.Sequential(nn.Linear(input_dim, 64), nn.Tanh(),
-                                 nn.Linear(64, 128), nn.Tanh(),
-                                 nn.Linear(128, 64), nn.Tanh(),
-                                 nn.Linear(64, 1))
+        # Modified architecture with softplus activation
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 64),
+            nn.Softplus(beta=5),  # Smoother activation with controlled sharpness
+            nn.Linear(64, 128),
+            nn.Softplus(beta=5),
+            nn.Linear(128, 64),
+            nn.Softplus(beta=5),
+            nn.Linear(64, 1)
+        )
         self.solar_constant = 1367.0  # W/m²
         self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
         self.beta = 0.1  # Default aerosol optical thickness
@@ -21,8 +27,8 @@ class SolarPINN(nn.Module):
 
     def forward(self, x):
         raw_output = self.net(x)
-        # Use ReLU to ensure non-negative output while allowing full range
-        return torch.relu(raw_output)
+        # Use modified tanh for smooth output scaling
+        return 0.5 * self.solar_constant * (torch.tanh(raw_output) + 1.0)
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -99,19 +105,21 @@ class SolarPINN(nn.Module):
         cos_theta, cos_zenith = self.cos_incidence_angle(
             lat, lon, time, slope, aspect)
 
-        # Enhanced nighttime penalty with smooth transition
-        nighttime_threshold = 0.001
-        twilight_threshold = 0.1
-        nighttime_condition = (cos_zenith <= nighttime_threshold)
-        twilight_condition = (cos_zenith > nighttime_threshold) & (cos_zenith <= twilight_threshold)
+        # Smooth transition for day/night boundary with reduced penalties
+        nighttime_threshold = 0.01  # Relaxed threshold
+        twilight_threshold = 0.15  # Extended twilight zone
         
-        # Stronger penalty for nighttime predictions
+        # Smooth sigmoid transition functions
+        night_factor = torch.sigmoid(-(cos_zenith - nighttime_threshold) * 20)
+        twilight_factor = torch.sigmoid((cos_zenith - nighttime_threshold) * 10) * torch.sigmoid(-(cos_zenith - twilight_threshold) * 10)
+        
+        # Reduced penalties with smooth transitions
         nighttime_penalty = torch.where(
-            nighttime_condition,
-            torch.abs(y_pred) * 1000.0,  # Increased penalty for nighttime
+            cos_zenith <= nighttime_threshold,
+            torch.abs(y_pred) * 10.0,  # Reduced nighttime penalty
             torch.where(
-                twilight_condition,
-                torch.abs(y_pred - self.solar_constant * cos_zenith) * 100.0,  # Smooth transition
+                cos_zenith <= twilight_threshold,
+                torch.abs(y_pred - self.solar_constant * cos_zenith) * 5.0 * twilight_factor,  # Reduced twilight penalty
                 torch.zeros_like(y_pred)
             ))
 

@@ -17,48 +17,72 @@ def main():
     st.title("Solar Panel Placement Optimizer")
     st.write("Physics-Informed Neural Network for Optimal Solar Panel Placement")
     
-    # Interactive Map
+    # Import required libraries
     import folium
     from streamlit_folium import st_folium
     
-    # Create a session state to store the selected location
+    # Create session states
     if 'selected_location' not in st.session_state:
         st.session_state.selected_location = {'lat': 0.0, 'lng': 0.0}
+    if 'show_map' not in st.session_state:
+        st.session_state.show_map = False
     
-    # Create base map centered at current location
-    m = folium.Map(location=[st.session_state.selected_location['lat'], 
-                           st.session_state.selected_location['lng']], 
-                  zoom_start=2)
-    
-    # Add click event handler
-    map_data = st_folium(m, width=800, height=400)
-    
-    # Update selected location when map is clicked
-    if map_data['last_clicked']:
-        st.session_state.selected_location = {
-            'lat': map_data['last_clicked']['lat'],
-            'lng': map_data['last_clicked']['lng']
-        }
-        
-        # Add marker at selected location
-        m = folium.Map(location=[st.session_state.selected_location['lat'], 
-                               st.session_state.selected_location['lng']], 
-                      zoom_start=4)
-        folium.Marker(
-            [st.session_state.selected_location['lat'], 
-             st.session_state.selected_location['lng']],
-            popup=f"Selected Location\nLat: {st.session_state.selected_location['lat']:.4f}\nLng: {st.session_state.selected_location['lng']:.4f}"
-        ).add_to(m)
-        st_folium(m, width=800, height=400)
+    def show_map_dialog():
+        if st.session_state.show_map:
+            with st.dialog("Location Selection Map", on_close=lambda: setattr(st.session_state, 'show_map', False)):
+                st.subheader("Select Location on Map")
+                
+                # Create base map centered at current location
+                m = folium.Map(location=[st.session_state.selected_location['lat'], 
+                                       st.session_state.selected_location['lng']], 
+                              zoom_start=2)
+                
+                # Add existing marker if location is set
+                if st.session_state.selected_location['lat'] != 0.0 or st.session_state.selected_location['lng'] != 0.0:
+                    folium.Marker(
+                        [st.session_state.selected_location['lat'], 
+                         st.session_state.selected_location['lng']],
+                        popup=f"Selected Location\nLat: {st.session_state.selected_location['lat']:.4f}\nLng: {st.session_state.selected_location['lng']:.4f}"
+                    ).add_to(m)
+                
+                # Add click event handler
+                map_data = st_folium(m, width=700, height=400)
+                
+                # Update selected location when map is clicked
+                if map_data['last_clicked']:
+                    st.session_state.selected_location = {
+                        'lat': map_data['last_clicked']['lat'],
+                        'lng': map_data['last_clicked']['lng']
+                    }
+                    # Recreate map with updated marker
+                    m = folium.Map(location=[st.session_state.selected_location['lat'], 
+                                           st.session_state.selected_location['lng']], 
+                                  zoom_start=4)
+                    folium.Marker(
+                        [st.session_state.selected_location['lat'], 
+                         st.session_state.selected_location['lng']],
+                        popup=f"Selected Location\nLat: {st.session_state.selected_location['lat']:.4f}\nLng: {st.session_state.selected_location['lng']:.4f}"
+                    ).add_to(m)
+                    st_folium(m, width=700, height=400)
     
     # Sidebar inputs
     st.sidebar.header("Parameters")
     
     # Location parameters
+    st.sidebar.subheader("Location Parameters")
+    
+    # Map selection button
+    if st.sidebar.button("📍 Select Location on Map"):
+        st.session_state.show_map = True
+    
+    # Show map dialog if button is clicked
+    show_map_dialog()
+    
     col1, col2 = st.sidebar.columns(2)
     with col1:
         latitude = st.number_input("Latitude", min_value=-90.0, max_value=90.0, 
-                                 value=st.session_state.selected_location['lat'], step=0.1)
+                                 value=st.session_state.selected_location['lat'], step=0.1,
+                                 help="Click 'Select Location on Map' to choose location visually")
     with col2:
         latitude = st.slider("Latitude Slider", -90.0, 90.0, latitude)
     
@@ -69,7 +93,8 @@ def main():
     col1, col2 = st.sidebar.columns(2)
     with col1:
         longitude = st.number_input("Longitude", min_value=-180.0, max_value=180.0, 
-                                  value=st.session_state.selected_location['lng'], step=0.1)
+                                  value=st.session_state.selected_location['lng'], step=0.1,
+                                  help="Click 'Select Location on Map' to choose location visually")
     with col2:
         longitude = st.slider("Longitude Slider", -180.0, 180.0, longitude)
     

@@ -82,6 +82,17 @@ class SolarPINN(nn.Module):
         lat, lon, time, slope, aspect, atm, cloud_cover, wavelength = (
             x[:, i] for i in range(8))
         
+        # Calculate cos_theta and cos_zenith
+        cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
+        
+        # Strong nighttime penalty (when sun is below horizon)
+        nighttime_condition = (cos_zenith <= 0.001)
+        nighttime_penalty = torch.where(
+            nighttime_condition,
+            torch.abs(y_pred) * 100.0,  # Strong penalty for non-zero predictions at night
+            torch.zeros_like(y_pred)
+        )
+        
         # Compute gradients for physics residual
         y_grad = torch.autograd.grad(
             y_pred.sum(), x, 
@@ -164,8 +175,9 @@ class SolarPINN(nn.Module):
                          physics_weight * physics_residual**2 +
                          boundary_weight * (boundary_residual + max_irradiance_residual) +
                          conservation_weight * conservation_residual**2 +
-                         non_negative_penalty +
-                         efficiency_range_penalty)
+                         non_negative_penalty * 50.0 +  # Increased weight for negative predictions
+                         efficiency_range_penalty +
+                         nighttime_penalty)
         
         # Apply gradient clipping for stability
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)

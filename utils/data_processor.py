@@ -71,12 +71,35 @@ class DataProcessor:
         return predictions
     
     def generate_training_data(self, n_samples=1000):
-        """Generate synthetic training data"""
+        """Generate synthetic training data with enhanced edge cases"""
+        # Generate more edge cases
+        n_night = int(n_samples * 0.3)  # 30% nighttime cases
+        n_transition = int(n_samples * 0.2)  # 20% sunrise/sunset
+        n_day = n_samples - n_night - n_transition
+        
+        # Nighttime data
+        night_hours = np.random.uniform(18, 24, n_night//2)
+        night_hours = np.append(night_hours, np.random.uniform(0, 6, n_night//2))
+        
+        # Transition data (sunrise/sunset)
+        transition_hours = np.concatenate([
+            np.random.uniform(5, 7, n_transition//2),  # sunrise
+            np.random.uniform(17, 19, n_transition//2)  # sunset
+        ])
+        
+        # Daytime data
+        day_hours = np.random.uniform(7, 17, n_day)
+        
+        # Combine all hours
+        time = np.concatenate([night_hours, transition_hours, day_hours])
+        
+        # Generate other parameters
         lat = np.random.uniform(-90, 90, n_samples)
         lon = np.random.uniform(-180, 180, n_samples)
-        time = np.random.uniform(0, 24, n_samples)
-        slope = np.random.uniform(0, 45, n_samples)
+        slope = np.random.uniform(0, 90, n_samples)
         aspect = np.random.uniform(0, 360, n_samples)
         atm = np.random.uniform(0.5, 1.0, n_samples)
+        cloud_cover = np.random.uniform(0, 1, n_samples)
+        wavelength = np.random.uniform(0.3, 1.0, n_samples)
         
-        return self.prepare_data(lat, lon, time, slope, aspect, atm)
+        return self.prepare_data(lat, lon, time, slope, aspect, atm, cloud_cover, wavelength)

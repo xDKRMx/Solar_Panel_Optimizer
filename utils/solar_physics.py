@@ -3,6 +3,10 @@ import numpy as np
 class SolarIrradianceCalculator:
     def __init__(self):
         self.solar_constant = 1367  # W/m²
+        self.beta = 0.1  # Default aerosol optical thickness
+        self.alpha = 1.3  # Default Ångström exponent
+        self.cloud_alpha = 0.75  # Empirical cloud transmission parameter
+        self.ref_wavelength = 0.5  # μm, reference wavelength
 
     def solar_declination(self, day_number):
         """Calculate solar declination angle"""
@@ -26,16 +30,41 @@ class SolarIrradianceCalculator:
                 np.sin(lat_rad) * np.cos(decl_rad) * np.cos(hour_rad) * np.sin(slope_rad) * np.cos(aspect_rad) +
                 np.cos(decl_rad) * np.sin(hour_rad) * np.sin(slope_rad) * np.sin(aspect_rad))
 
-    def calculate_irradiance(self, latitude, longitude, day_number, hour, slope, aspect, atm_transmission):
-        """Calculate solar irradiance"""
+    def calculate_air_mass(self, zenith_angle):
+        """Calculate air mass using Kasten and Young's formula"""
+        zenith_deg = np.degrees(zenith_angle)
+        return 1.0 / (np.cos(zenith_angle) + 0.50572 * (96.07995 - zenith_deg) ** (-1.6364))
+
+    def calculate_optical_depth(self, wavelength):
+        """Calculate wavelength-dependent optical depth using Ångström turbidity formula"""
+        return self.beta * (wavelength / self.ref_wavelength) ** (-self.alpha)
+
+    def calculate_irradiance(self, latitude, longitude, day_number, hour, slope, aspect, atm_transmission, cloud_cover=0.0, wavelength=0.5):
+        """Calculate solar irradiance with advanced atmospheric effects"""
+        # Calculate angles
         declination = self.solar_declination(day_number)
         hour_ang = self.hour_angle(hour, longitude)
         cos_inc = self.cos_incidence_angle(latitude, declination, hour_ang, slope, aspect)
         
-        # Direct normal irradiance
-        dni = self.solar_constant * atm_transmission
+        # Calculate zenith angle and air mass
+        lat_rad = np.radians(latitude)
+        decl_rad = np.radians(declination)
+        hour_rad = np.radians(hour_ang)
+        cos_zenith = (np.sin(lat_rad) * np.sin(decl_rad) +
+                     np.cos(lat_rad) * np.cos(decl_rad) * np.cos(hour_rad))
+        zenith_angle = np.arccos(np.clip(cos_zenith, -1.0, 1.0))
+        
+        # Calculate atmospheric effects
+        air_mass = self.calculate_air_mass(zenith_angle)
+        optical_depth = self.calculate_optical_depth(wavelength)
+        
+        # Cloud cover effect
+        cloud_transmission = 1.0 - self.cloud_alpha * (cloud_cover ** 3)
+        
+        # Direct normal irradiance with Beer-Lambert law
+        dni = self.solar_constant * np.exp(-optical_depth * air_mass) * atm_transmission * cloud_transmission
         
         # Surface irradiance
-        irradiance = dni * max(0, cos_inc)
+        irradiance = dni * np.maximum(0, cos_inc)
         
         return irradiance

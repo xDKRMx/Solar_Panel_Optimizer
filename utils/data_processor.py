@@ -65,9 +65,7 @@ class DataProcessor:
     
     def denormalize_predictions(self, predictions, scale_irradiance=True):
         """Convert predictions to physical units"""
-        # Predictions are already between 0 and 1 from sigmoid
-        if scale_irradiance:
-            return predictions * self.irradiance_scale
+        # Predictions are already in physical units (W/m²)
         return predictions
     
     def generate_training_data(self, n_samples=1000):

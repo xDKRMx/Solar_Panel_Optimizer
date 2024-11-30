@@ -3,26 +3,56 @@ import torch
 
 class DataProcessor:
     def __init__(self):
-        self.input_scaler = None
-        self.output_scaler = None
+        # Physical constants for non-dimensionalization
+        self.earth_radius = 6371.0  # km
+        self.day_period = 24.0  # hours
+        self.solar_constant = 1367.0  # W/m²
+        
+        # Initialize scalers
+        self.length_scale = self.earth_radius
+        self.time_scale = self.day_period
+        self.irradiance_scale = self.solar_constant
         
     def prepare_data(self, lat, lon, time, slope, aspect, atm):
-        """Prepare data for PINN model"""
-        data = np.column_stack([lat, lon, time, slope, aspect, atm])
+        """Prepare and non-dimensionalize data for PINN model"""
+        # Convert to numpy arrays if not already
+        lat = np.asarray(lat)
+        lon = np.asarray(lon)
+        time = np.asarray(time)
+        slope = np.asarray(slope)
+        aspect = np.asarray(aspect)
+        atm = np.asarray(atm)
+        
+        # Non-dimensionalize the data
+        time_nd = time / self.time_scale
+        
+        # Angles (lat, lon, slope, aspect) are already non-dimensional
+        # Atmospheric transmission is already non-dimensional
+        
+        data = np.column_stack([lat, lon, time_nd, slope, aspect, atm])
         return torch.FloatTensor(data)
     
     def normalize_data(self, data):
-        """Normalize input data"""
-        if self.input_scaler is None:
-            self.input_scaler = {
-                'mean': data.mean(axis=0),
-                'std': data.std(axis=0)
-            }
-        return (data - self.input_scaler['mean']) / self.input_scaler['std']
+        """Normalize input data to [-1, 1] range"""
+        # Define normalization ranges for each variable
+        ranges = np.array([
+            [-90, 90],      # latitude
+            [-180, 180],    # longitude
+            [0, 1],        # normalized time
+            [0, 90],       # slope
+            [0, 360],      # aspect
+            [0, 1]         # atmospheric transmission
+        ])
+        
+        # Normalize to [-1, 1]
+        normalized = 2 * (data - ranges[:, 0]) / (ranges[:, 1] - ranges[:, 0]) - 1
+        return normalized
     
-    def denormalize_data(self, data):
-        """Denormalize predictions"""
-        return data * self.input_scaler['std'] + self.input_scaler['mean']
+    def denormalize_predictions(self, predictions, scale_irradiance=True):
+        """Convert normalized predictions back to physical units"""
+        if scale_irradiance:
+            return predictions * self.irradiance_scale
+        return predictions
     
     def generate_training_data(self, n_samples=1000):
         """Generate synthetic training data"""

@@ -3,18 +3,15 @@ import torch.nn as nn
 import numpy as np
 
 class SolarPINN(nn.Module):
-    def __init__(self, input_dim=8, dropout_rate=0.2):  # Updated for cloud_cover and wavelength
+    def __init__(self, input_dim=8):  # Updated for cloud_cover and wavelength
         super(SolarPINN, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 64),
             nn.Tanh(),
-            nn.Dropout(dropout_rate),
             nn.Linear(64, 128),
             nn.Tanh(),
-            nn.Dropout(dropout_rate),
             nn.Linear(128, 64),
             nn.Tanh(),
-            nn.Dropout(dropout_rate),
             nn.Linear(64, 1)
         )
         self.solar_constant = 1367.0  # W/m²
@@ -133,24 +130,12 @@ class SolarPINN(nn.Module):
         return torch.mean(total_residual)
 
 class PINNTrainer:
-    def __init__(self, model, learning_rate=0.001, weight_decay=1e-5):
+    def __init__(self, model, learning_rate=0.001):
         self.model = model
-        # Add momentum and L2 regularization
-        self.optimizer = torch.optim.Adam(
-            model.parameters(), 
-            lr=learning_rate,
-            weight_decay=weight_decay,
-            betas=(0.9, 0.999)
-        )
-        # Add learning rate scheduler
-        self.scheduler = torch.optim.lr_scheduler.StepLR(
-            self.optimizer, 
-            step_size=20, 
-            gamma=0.9
-        )
+        self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         self.mse_loss = nn.MSELoss()
         
-        # Fixed weights instead of dynamic weights
+        # Loss weights
         self.w_data = 0.4      # Weight for data fitting
         self.w_physics = 0.4   # Weight for physics constraints
         self.w_boundary = 0.2  # Weight for boundary conditions
@@ -193,12 +178,6 @@ class PINNTrainer:
         
         # Backward pass
         total_loss.backward()
-        
-        # Apply gradient clipping
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-        
-        # Optimizer and scheduler steps
         self.optimizer.step()
-        self.scheduler.step()
         
         return total_loss.item(), mse.item(), physics_loss.item(), boundary_loss.item()

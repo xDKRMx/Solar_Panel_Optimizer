@@ -53,7 +53,8 @@ def main():
     # Model prediction
     with torch.no_grad():
         prediction = model(input_data)
-        prediction = processor.denormalize_predictions(prediction)
+        irradiance = processor.denormalize_predictions(prediction, is_efficiency=False)
+        efficiency = processor.denormalize_predictions(prediction, is_efficiency=True)
     
     # Calculate physics-based irradiance
     physics_irradiance = calculator.calculate_irradiance(
@@ -70,7 +71,8 @@ def main():
     
     with col1:
         st.subheader("PINN Prediction")
-        st.write(f"Predicted Irradiance: {prediction.item():.2f} W/m²")
+        st.write(f"Predicted Irradiance: {irradiance.item():.2f} W/m²")
+        st.write(f"Solar Panel Efficiency: {efficiency.item():.1%}")
     
     with col2:
         st.subheader("Physics Calculation")

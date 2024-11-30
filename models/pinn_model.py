@@ -179,14 +179,31 @@ class SolarPINN(nn.Module):
         boundary_weight = 0.15
         conservation_weight = 0.15
 
-        # Update total residual calculation with stronger weights
+        # Add stronger efficiency constraints
+        efficiency_min = 0.15
+        efficiency_max = 0.25
+        
+        # Calculate predicted efficiency
+        efficiency = y_pred / theoretical_irradiance
+        efficiency = torch.where(theoretical_irradiance > 1.0,
+                               efficiency,
+                               torch.zeros_like(efficiency))
+        
+        # Add efficiency penalty
+        efficiency_penalty = (
+            torch.relu(efficiency_min - efficiency) * 1000.0 +
+            torch.relu(efficiency - efficiency_max) * 1000.0
+        )
+
+        # Update total residual calculation with stronger weights and efficiency penalty
         total_residual = (
             spatial_weight * spatial_residual +
             temporal_weight * temporal_residual +
             5.0 * physics_residual +  # Increased weight for physics matching
             boundary_weight * (torch.relu(-y_pred) + torch.relu(y_pred - self.solar_constant)) +
             conservation_weight * conservation_residual**2 +
-            10.0 * nighttime_penalty  # Increased nighttime penalty
+            10.0 * nighttime_penalty +  # Increased nighttime penalty
+            efficiency_penalty  # Add efficiency constraints
         )
 
         # Apply gradient clipping for stability

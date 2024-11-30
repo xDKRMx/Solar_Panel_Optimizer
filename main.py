@@ -104,7 +104,9 @@ def main():
                     np.array([atm_transmission])
                 )
                 with torch.no_grad():
-                    efficiency[i, j] = model(input_data).item()
+                    pred = model(input_data).item()
+                    # Normalize efficiency to physical range [0, 1]
+                    efficiency[i, j] = ((pred + 1) / 2) * 0.25  # Convert from [-1, 1] to [0, 1] and scale to max 25%
         
         # Plot optimization results
         fig = plotter.plot_optimization_results(slopes, aspects, efficiency)

@@ -65,12 +65,13 @@ class DataProcessor:
     
     def denormalize_predictions(self, predictions, scale_irradiance=True):
         """Convert normalized predictions back to physical units"""
-        # First denormalize from [-1, 1] to [0, 1]
+        # First properly denormalize from [-1, 1] to [0, 1]
         predictions_01 = (predictions + 1) / 2
         
-        # Then scale to physical units
+        # Then scale to physical units with proper bounds
         if scale_irradiance:
-            return predictions_01 * self.irradiance_scale
+            # Ensure predictions can't exceed solar constant
+            return predictions_01 * self.irradiance_scale * torch.cos(torch.tensor(np.pi/4))
         return predictions_01
     
     def generate_training_data(self, n_samples=1000):

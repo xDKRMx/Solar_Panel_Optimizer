@@ -131,12 +131,20 @@ class SolarPINN(nn.Module):
         # Ensure proper cos_zenith clipping for numerical stability
         cos_zenith = torch.clamp(cos_zenith, min=0.001, max=1.0)
         
-        # Set irradiance to 0 during nighttime
+        # Stronger nighttime handling
+        nighttime_mask = cos_zenith <= 0.001
         theoretical_irradiance = torch.where(
-            cos_zenith > 0,
-            direct_irradiance + diffuse_irradiance + reflected_irradiance,
-            torch.zeros_like(direct_irradiance)
+            nighttime_mask,
+            torch.zeros_like(direct_irradiance),
+            direct_irradiance + diffuse_irradiance + reflected_irradiance
         )
+
+        # Add specific nighttime loss term
+        nighttime_loss = torch.mean(torch.where(
+            nighttime_mask,
+            torch.abs(y_pred),  # Should be zero at night
+            torch.zeros_like(y_pred)
+        ))
         
         # Physics residuals
         spatial_residual = y_grad[:, 0]**2 + y_grad[:, 1]**2  # Spatial variation
@@ -157,7 +165,8 @@ class SolarPINN(nn.Module):
                          temporal_weight * temporal_residual + 
                          physics_weight * physics_residual**2 +
                          boundary_weight * (boundary_residual + max_irradiance_residual) +
-                         conservation_weight * conservation_residual**2)
+                         conservation_weight * conservation_residual**2 +
+                         0.3 * nighttime_loss)  # High weight for nighttime accuracy
         
         # Apply gradient clipping for stability
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)

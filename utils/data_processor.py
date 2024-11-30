@@ -74,12 +74,32 @@ class DataProcessor:
         return predictions_01
     
     def generate_training_data(self, n_samples=1000):
-        """Generate synthetic training data"""
-        lat = np.random.uniform(-90, 90, n_samples)
-        lon = np.random.uniform(-180, 180, n_samples)
-        time = np.random.uniform(0, 24, n_samples)
-        slope = np.random.uniform(0, 45, n_samples)
-        aspect = np.random.uniform(0, 360, n_samples)
-        atm = np.random.uniform(0.5, 1.0, n_samples)
+        """Generate synthetic training data with enhanced nighttime sampling"""
+        # Regular daytime samples
+        day_samples = int(n_samples * 0.7)  # 70% daytime conditions
+        lat_day = np.random.uniform(-90, 90, day_samples)
+        lon_day = np.random.uniform(-180, 180, day_samples)
+        time_day = np.random.uniform(6, 18, day_samples)  # Daytime hours
+        slope_day = np.random.uniform(0, 45, day_samples)
+        aspect_day = np.random.uniform(0, 360, day_samples)
+        atm_day = np.random.uniform(0.5, 1.0, day_samples)
+
+        # Nighttime samples
+        night_samples = n_samples - day_samples  # 30% nighttime conditions
+        lat_night = np.random.uniform(-90, 90, night_samples)
+        lon_night = np.random.uniform(-180, 180, night_samples)
+        time_night = np.random.uniform(18, 30, night_samples)  # Evening to morning
+        time_night = np.where(time_night >= 24, time_night - 24, time_night)  # Wrap to [0, 24]
+        slope_night = np.random.uniform(0, 45, night_samples)
+        aspect_night = np.random.uniform(0, 360, night_samples)
+        atm_night = np.random.uniform(0.5, 1.0, night_samples)
+
+        # Combine day and night samples
+        lat = np.concatenate([lat_day, lat_night])
+        lon = np.concatenate([lon_day, lon_night])
+        time = np.concatenate([time_day, time_night])
+        slope = np.concatenate([slope_day, slope_night])
+        aspect = np.concatenate([aspect_day, aspect_night])
+        atm = np.concatenate([atm_day, atm_night])
         
         return self.prepare_data(lat, lon, time, slope, aspect, atm)

@@ -23,17 +23,9 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
         
     def forward(self, x):
-        # Scale sigmoid output to efficiency range (0.15-0.25)
-        base_output = torch.sigmoid(self.net(x))
-        return 0.15 + (0.25 - 0.15) * base_output
+        # Use sigmoid instead of tanh to ensure output is between 0 and 1
+        return torch.sigmoid(self.net(x))
     
-    def get_training_progress(self):
-        # Track training progress (0 to 1)
-        if not hasattr(self, 'training_steps'):
-            self.training_steps = 0
-        self.training_steps += 1
-        return min(self.training_steps / 5000.0, 1.0)  # Assume convergence at 5000 steps
-        
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
         day_number = (time / 24.0 * 365).clamp(0, 365)
@@ -153,29 +145,26 @@ class SolarPINN(nn.Module):
         boundary_residual = torch.relu(-y_pred)  # Non-negative constraint
         max_irradiance_residual = torch.relu(y_pred - self.solar_constant)  # Maximum limit
         
-        # Adjust efficiency constraint weights dynamically
-        efficiency_violation = torch.mean(torch.relu(y_pred - 0.25) + torch.relu(0.15 - y_pred))
-        efficiency_weight = 5.0 * torch.exp(-efficiency_violation)
-        
-        # Strengthen physics-based accuracy
-        physics_weight = 0.6 * (1 - torch.exp(-physics_residual.abs().mean()))
+        # Dynamic weighting based on training progress
         spatial_weight = 0.2 * torch.exp(-conservation_residual.abs().mean())
         temporal_weight = 0.2 * torch.exp(-temporal_residual.abs().mean())
+        physics_weight = 0.3 * (1 - torch.exp(-physics_residual.abs().mean()))
+        boundary_weight = 0.15
+        conservation_weight = 0.15
+
+        # Add stronger non-negative constraint
+        non_negative_penalty = torch.mean(torch.relu(-y_pred)) * 10.0
         
-        # Dynamic weighting for efficiency constraints
-        efficiency_range_penalty = (
-            efficiency_weight * torch.mean(torch.relu(y_pred - 0.25)) +
-            efficiency_weight * torch.mean(torch.relu(0.15 - y_pred))
-        )
+        # Add realistic efficiency range constraint (typical solar panel range: 0.15-0.25)
+        efficiency_range_penalty = torch.mean(torch.relu(y_pred - 0.25)) * 5.0
         
-        # Add curriculum learning for better convergence
-        training_progress = self.get_training_progress()
-        physics_weight *= (1.0 - np.exp(-5 * training_progress))
-        
-        # Combine residuals with dynamic weights
-        total_residual = (spatial_weight * spatial_residual +
-                         temporal_weight * temporal_residual +
+        # Combine residuals with dynamic weights and additional constraints
+        total_residual = (spatial_weight * spatial_residual + 
+                         temporal_weight * temporal_residual + 
                          physics_weight * physics_residual**2 +
+                         boundary_weight * (boundary_residual + max_irradiance_residual) +
+                         conservation_weight * conservation_residual**2 +
+                         non_negative_penalty +
                          efficiency_range_penalty)
         
         # Apply gradient clipping for stability

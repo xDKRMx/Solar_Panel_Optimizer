@@ -65,7 +65,7 @@ class DataProcessor:
     
     def denormalize_predictions(self, predictions, scale_irradiance=True):
         """Convert predictions to physical units"""
-        # Predictions are already in correct efficiency range from model
+        # Predictions are already between 0 and 1 from sigmoid
         if scale_irradiance:
             return predictions * self.irradiance_scale
         return predictions

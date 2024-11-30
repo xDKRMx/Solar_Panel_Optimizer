@@ -23,11 +23,11 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
         
     def forward(self, x):
-        # Use sigmoid for base output
+        # Use sigmoid for base scaling, then enforce efficiency range
         raw_output = torch.sigmoid(self.net(x))
-        # Scale to realistic efficiency range (15-25%)
-        efficiency = 0.15 + (raw_output * 0.10)  # Maps [0,1] to [0.15,0.25]
-        return efficiency * self.solar_constant
+        # Scale to efficiency range (15-25%)
+        scaled_output = 0.15 + raw_output * 0.10  # Maps [0,1] to [0.15,0.25]
+        return scaled_output
     
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -169,13 +169,14 @@ class SolarPINN(nn.Module):
         # Add stronger non-negative constraint
         non_negative_penalty = torch.mean(torch.relu(-y_pred)) * 10.0
         
-        # Add simple efficiency constraints
-        efficiency = y_pred / self.solar_constant
-        efficiency_penalty = (
-            torch.mean(torch.relu(0.15 - efficiency)) * 1000.0 +  # Must be above 15%
-            torch.mean(torch.relu(efficiency - 0.25)) * 1000.0    # Must be below 25%
+        # Add extremely strong efficiency range constraints
+        min_efficiency = 0.15
+        max_efficiency = 0.25
+        efficiency_range_penalty = (
+            torch.mean(torch.relu(-y_pred + min_efficiency)) * 1000.0 +  # Strong penalty below 15%
+            torch.mean(torch.relu(y_pred - max_efficiency)) * 1000.0     # Strong penalty above 25%
         )
-
+        
         # Combine residuals with dynamic weights and additional constraints
         total_residual = (spatial_weight * spatial_residual + 
                          temporal_weight * temporal_residual + 
@@ -183,7 +184,7 @@ class SolarPINN(nn.Module):
                          boundary_weight * (boundary_residual + max_irradiance_residual) +
                          conservation_weight * conservation_residual**2 +
                          non_negative_penalty * 50.0 +  # Increased weight for negative predictions
-                         efficiency_penalty +
+                         efficiency_range_penalty +
                          nighttime_penalty)
         
         # Apply gradient clipping for stability

@@ -17,21 +17,65 @@ def main():
     st.title("Solar Panel Placement Optimizer")
     st.write("Physics-Informed Neural Network for Optimal Solar Panel Placement")
     
+    # Interactive Map
+    import folium
+    from streamlit_folium import st_folium
+    
+    # Create a session state to store the selected location
+    if 'selected_location' not in st.session_state:
+        st.session_state.selected_location = {'lat': 0.0, 'lng': 0.0}
+    
+    # Create base map centered at current location
+    m = folium.Map(location=[st.session_state.selected_location['lat'], 
+                           st.session_state.selected_location['lng']], 
+                  zoom_start=2)
+    
+    # Add click event handler
+    map_data = st_folium(m, width=800, height=400)
+    
+    # Update selected location when map is clicked
+    if map_data['last_clicked']:
+        st.session_state.selected_location = {
+            'lat': map_data['last_clicked']['lat'],
+            'lng': map_data['last_clicked']['lng']
+        }
+        
+        # Add marker at selected location
+        m = folium.Map(location=[st.session_state.selected_location['lat'], 
+                               st.session_state.selected_location['lng']], 
+                      zoom_start=4)
+        folium.Marker(
+            [st.session_state.selected_location['lat'], 
+             st.session_state.selected_location['lng']],
+            popup=f"Selected Location\nLat: {st.session_state.selected_location['lat']:.4f}\nLng: {st.session_state.selected_location['lng']:.4f}"
+        ).add_to(m)
+        st_folium(m, width=800, height=400)
+    
     # Sidebar inputs
     st.sidebar.header("Parameters")
     
     # Location parameters
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        latitude = st.number_input("Latitude", min_value=-90.0, max_value=90.0, value=0.0, step=0.1)
+        latitude = st.number_input("Latitude", min_value=-90.0, max_value=90.0, 
+                                 value=st.session_state.selected_location['lat'], step=0.1)
     with col2:
         latitude = st.slider("Latitude Slider", -90.0, 90.0, latitude)
+    
+    # Update session state if input fields change
+    if latitude != st.session_state.selected_location['lat']:
+        st.session_state.selected_location['lat'] = latitude
 
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        longitude = st.number_input("Longitude", min_value=-180.0, max_value=180.0, value=0.0, step=0.1)
+        longitude = st.number_input("Longitude", min_value=-180.0, max_value=180.0, 
+                                  value=st.session_state.selected_location['lng'], step=0.1)
     with col2:
         longitude = st.slider("Longitude Slider", -180.0, 180.0, longitude)
+    
+    # Update session state if input fields change
+    if longitude != st.session_state.selected_location['lng']:
+        st.session_state.selected_location['lng'] = longitude
     
     # Time parameters
     col1, col2 = st.sidebar.columns(2)

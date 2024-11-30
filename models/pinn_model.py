@@ -23,13 +23,10 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
         
     def forward(self, x):
-        # Get raw output (0-1)
+        # Use sigmoid for base output
         raw_output = torch.sigmoid(self.net(x))
-        # Scale to full irradiance range
-        irradiance = raw_output * self.solar_constant
-        # Calculate efficiency as ratio (ensure 15-25% range)
-        efficiency = torch.clamp(irradiance / self.solar_constant, min=0.15, max=0.25)
-        # Final output is efficiency-adjusted irradiance
+        # Scale to realistic efficiency range (15-25%)
+        efficiency = 0.15 + (raw_output * 0.10)  # Maps [0,1] to [0.15,0.25]
         return efficiency * self.solar_constant
     
     def solar_declination(self, time):
@@ -172,18 +169,13 @@ class SolarPINN(nn.Module):
         # Add stronger non-negative constraint
         non_negative_penalty = torch.mean(torch.relu(-y_pred)) * 10.0
         
-        # Add irradiance and efficiency constraints
-        irradiance_penalty = (
-            torch.mean(torch.relu(-y_pred)) * 100.0 +  # No negative irradiance
-            torch.mean(torch.relu(y_pred - self.solar_constant)) * 100.0  # Max 1367 W/m²
-        )
-
+        # Add simple efficiency constraints
         efficiency = y_pred / self.solar_constant
         efficiency_penalty = (
-            torch.mean(torch.relu(0.15 - efficiency)) * 100.0 +  # Min 15% efficiency
-            torch.mean(torch.relu(efficiency - 0.25)) * 100.0    # Max 25% efficiency
+            torch.mean(torch.relu(0.15 - efficiency)) * 1000.0 +  # Must be above 15%
+            torch.mean(torch.relu(efficiency - 0.25)) * 1000.0    # Must be below 25%
         )
-        
+
         # Combine residuals with dynamic weights and additional constraints
         total_residual = (spatial_weight * spatial_residual + 
                          temporal_weight * temporal_residual + 
@@ -191,8 +183,7 @@ class SolarPINN(nn.Module):
                          boundary_weight * (boundary_residual + max_irradiance_residual) +
                          conservation_weight * conservation_residual**2 +
                          non_negative_penalty * 50.0 +  # Increased weight for negative predictions
-                         irradiance_penalty +
-                          efficiency_penalty +
+                         efficiency_penalty +
                          nighttime_penalty)
         
         # Apply gradient clipping for stability

@@ -23,9 +23,11 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
         
     def forward(self, x):
-        # Use sigmoid for 0-1 range, then scale to typical efficiency range
+        # Use sigmoid for base scaling, then enforce efficiency range
         raw_output = torch.sigmoid(self.net(x))
-        return raw_output * 0.25  # Max efficiency of 25%
+        # Scale to efficiency range (15-25%)
+        scaled_output = 0.15 + raw_output * 0.10  # Maps [0,1] to [0.15,0.25]
+        return scaled_output
     
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -167,12 +169,12 @@ class SolarPINN(nn.Module):
         # Add stronger non-negative constraint
         non_negative_penalty = torch.mean(torch.relu(-y_pred)) * 10.0
         
-        # Add realistic efficiency range constraint (15-25%)
+        # Add extremely strong efficiency range constraints
         min_efficiency = 0.15
         max_efficiency = 0.25
         efficiency_range_penalty = (
-            torch.mean(torch.relu(-y_pred + min_efficiency)) * 50.0 +  # Increased weight for below min
-            torch.mean(torch.relu(y_pred - max_efficiency)) * 50.0     # Increased weight for above max
+            torch.mean(torch.relu(-y_pred + min_efficiency)) * 1000.0 +  # Strong penalty below 15%
+            torch.mean(torch.relu(y_pred - max_efficiency)) * 1000.0     # Strong penalty above 25%
         )
         
         # Combine residuals with dynamic weights and additional constraints

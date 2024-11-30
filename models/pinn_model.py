@@ -23,8 +23,8 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
         
     def forward(self, x):
-        # Add tanh activation to constrain output to [-1, 1]
-        return torch.tanh(self.net(x))
+        # Use sigmoid instead of tanh to ensure output is between 0 and 1
+        return torch.sigmoid(self.net(x))
     
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -152,12 +152,20 @@ class SolarPINN(nn.Module):
         boundary_weight = 0.15
         conservation_weight = 0.15
 
-        # Combine residuals with dynamic weights
+        # Add stronger non-negative constraint
+        non_negative_penalty = torch.mean(torch.relu(-y_pred)) * 10.0
+        
+        # Add realistic efficiency range constraint (typical solar panel range: 0.15-0.25)
+        efficiency_range_penalty = torch.mean(torch.relu(y_pred - 0.25)) * 5.0
+        
+        # Combine residuals with dynamic weights and additional constraints
         total_residual = (spatial_weight * spatial_residual + 
                          temporal_weight * temporal_residual + 
                          physics_weight * physics_residual**2 +
                          boundary_weight * (boundary_residual + max_irradiance_residual) +
-                         conservation_weight * conservation_residual**2)
+                         conservation_weight * conservation_residual**2 +
+                         non_negative_penalty +
+                         efficiency_range_penalty)
         
         # Apply gradient clipping for stability
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)

@@ -64,14 +64,11 @@ class DataProcessor:
         return normalized
     
     def denormalize_predictions(self, predictions, scale_irradiance=True):
-        """Convert normalized predictions back to physical units"""
-        # First denormalize from [-1, 1] to [0, 1]
-        predictions_01 = (predictions + 1) / 2
-        
-        # Then scale to physical units
+        """Convert predictions to physical units"""
+        # Predictions are already between 0 and 1 from sigmoid
         if scale_irradiance:
-            return predictions_01 * self.irradiance_scale
-        return predictions_01
+            return predictions * self.irradiance_scale
+        return predictions
     
     def generate_training_data(self, n_samples=1000):
         """Generate synthetic training data"""

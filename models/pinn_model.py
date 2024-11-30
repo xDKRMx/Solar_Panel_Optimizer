@@ -21,11 +21,8 @@ class SolarPINN(nn.Module):
 
     def forward(self, x):
         raw_output = self.net(x)
-        if self.training:
-            return torch.sigmoid(raw_output)
-        else:
-            # Expanded efficiency range (15-25%)
-            return torch.clamp(0.15 + (0.10 * torch.sigmoid(raw_output)), min=0.15, max=0.25)
+        # Let data_processor handle efficiency clipping
+        return torch.sigmoid(raw_output)
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -191,13 +188,13 @@ class SolarPINN(nn.Module):
         efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
         efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
         
-        # Increased penalty weight for stricter enforcement
-        efficiency_penalty = (efficiency_lower + efficiency_upper) * 1000.0
+        # Increased penalty weight for stricter enforcement (2000.0)
+        efficiency_penalty = (efficiency_lower + efficiency_upper) * 2000.0
         
-        # Additional exponential barrier terms for stronger enforcement
+        # Additional exponential barrier terms with higher penalties (5000.0)
         additional_lower_barrier = torch.exp(-200 * (y_pred - efficiency_min))
         additional_upper_barrier = torch.exp(200 * (y_pred - efficiency_max))
-        efficiency_penalty += (additional_lower_barrier + additional_upper_barrier) * 500.0
+        efficiency_penalty += (additional_lower_barrier + additional_upper_barrier) * 5000.0
 
         # Update clipping penalty
         clipping_penalty = torch.mean(torch.abs(

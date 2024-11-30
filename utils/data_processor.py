@@ -76,10 +76,12 @@ class DataProcessor:
     def denormalize_predictions(self, predictions, scale_irradiance=True):
         """Convert predictions to physical units"""
         if scale_irradiance:
-            return torch.clamp(predictions, 0) * self.irradiance_scale
+            # For irradiance predictions
+            return torch.clamp(predictions * self.irradiance_scale, min=0)
         else:
-            # For efficiency, enforce 15-25% range with hard clipping
-            return torch.clamp(0.15 + (0.10 * torch.sigmoid(predictions)), min=0.15, max=0.25)
+            # For efficiency, apply hard clipping after sigmoid
+            raw_efficiency = torch.sigmoid(predictions)
+            return torch.clamp(0.15 + (0.10 * raw_efficiency), min=0.15, max=0.25)
 
     def generate_training_data(self, n_samples=1000):
         """Generate synthetic training data with enhanced edge cases"""

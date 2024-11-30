@@ -155,37 +155,38 @@ class SolarPINN(nn.Module):
             direct_irradiance + diffuse_irradiance + reflected_irradiance,
             torch.zeros_like(direct_irradiance))
 
+        # Strengthen nighttime constraint with increased penalty
+        nighttime_penalty = torch.where(
+            cos_zenith <= 0.001,
+            torch.abs(y_pred) * 1000.0,  # Increased penalty for non-zero nighttime predictions
+            torch.zeros_like(y_pred)
+        )
+
         # Physics residuals
         spatial_residual = y_grad[:, 0]**2 + y_grad[:, 1]**2
         temporal_residual = y_grad[:, 2]
-        physics_residual = y_pred - theoretical_irradiance
 
-        # Strengthen efficiency constraints
-        efficiency_min = 0.15
-        efficiency_max = 0.25
-        efficiency_range = efficiency_max - efficiency_min
-
-        # Add to physics_loss calculation
-        efficiency_lower_bound = torch.mean(torch.relu(efficiency_min - y_pred)) * 20.0
-        efficiency_upper_bound = torch.mean(torch.relu(y_pred - efficiency_max)) * 20.0
+        # Strengthen physics-based matching
+        physics_residual = torch.where(
+            theoretical_irradiance < 1.0,  # Near-zero physics-based irradiance
+            torch.abs(y_pred) * 500.0,    # Strong penalty for non-zero predictions
+            (y_pred - theoretical_irradiance)**2
+        )
 
         # Dynamic weighting
         spatial_weight = 0.2 * torch.exp(-conservation_residual.abs().mean())
         temporal_weight = 0.2 * torch.exp(-temporal_residual.abs().mean())
-        physics_weight = 0.3 * (1 - torch.exp(-physics_residual.abs().mean()))
         boundary_weight = 0.15
         conservation_weight = 0.15
 
-        # Combine all residuals with weights and constraints
+        # Update total residual calculation with stronger weights
         total_residual = (
             spatial_weight * spatial_residual +
             temporal_weight * temporal_residual +
-            physics_weight * physics_residual**2 +
+            5.0 * physics_residual +  # Increased weight for physics matching
             boundary_weight * (torch.relu(-y_pred) + torch.relu(y_pred - self.solar_constant)) +
             conservation_weight * conservation_residual**2 +
-            efficiency_lower_bound +
-            efficiency_upper_bound +
-            nighttime_penalty
+            10.0 * nighttime_penalty  # Increased nighttime penalty
         )
 
         # Apply gradient clipping for stability

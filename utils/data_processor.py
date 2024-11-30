@@ -75,15 +75,14 @@ class DataProcessor:
 
     def denormalize_predictions(self, predictions, scale_irradiance=True):
         """Convert predictions to physical units"""
-        # First ensure predictions are within 0-1 range
+        # Ensure predictions follow physics-based scaling
         predictions_01 = torch.clamp(predictions, 0, 1)
         
         if scale_irradiance:
-            # Scale to full irradiance range (0-1367 W/m²)
-            return predictions_01 * self.solar_constant
+            return predictions_01 * self.irradiance_scale
         else:
-            # For efficiency values, scale to 15-25% range
-            return 0.15 + (predictions_01 * 0.10)  # 0.10 is the range (0.25 - 0.15)
+            # For efficiency values, strictly enforce 15-25% range
+            return 0.15 + (predictions_01 * 0.10)
 
     def generate_training_data(self, n_samples=1000):
         """Generate synthetic training data with enhanced edge cases"""

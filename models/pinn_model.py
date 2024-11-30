@@ -7,16 +7,10 @@ class SolarPINN(nn.Module):
 
     def __init__(self, input_dim=8):  # Updated for cloud_cover and wavelength
         super(SolarPINN, self).__init__()
-        # Modified architecture with softplus activation
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 64),
-            nn.Softplus(beta=5),  # Smoother activation with controlled sharpness
-            nn.Linear(64, 128),
-            nn.Softplus(beta=5),
-            nn.Linear(128, 64),
-            nn.Softplus(beta=5),
-            nn.Linear(64, 1)
-        )
+        self.net = nn.Sequential(nn.Linear(input_dim, 64), nn.Tanh(),
+                                 nn.Linear(64, 128), nn.Tanh(),
+                                 nn.Linear(128, 64), nn.Tanh(),
+                                 nn.Linear(64, 1))
         self.solar_constant = 1367.0  # W/m²
         self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
         self.beta = 0.1  # Default aerosol optical thickness
@@ -27,8 +21,8 @@ class SolarPINN(nn.Module):
 
     def forward(self, x):
         raw_output = self.net(x)
-        # Use modified tanh for smooth output scaling
-        return 0.5 * self.solar_constant * (torch.tanh(raw_output) + 1.0)
+        # Let data_processor handle efficiency clipping
+        return torch.sigmoid(raw_output)
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -105,21 +99,19 @@ class SolarPINN(nn.Module):
         cos_theta, cos_zenith = self.cos_incidence_angle(
             lat, lon, time, slope, aspect)
 
-        # Smooth transition for day/night boundary with reduced penalties
-        nighttime_threshold = 0.01  # Relaxed threshold
-        twilight_threshold = 0.15  # Extended twilight zone
+        # Enhanced nighttime penalty with smooth transition
+        nighttime_threshold = 0.001
+        twilight_threshold = 0.1
+        nighttime_condition = (cos_zenith <= nighttime_threshold)
+        twilight_condition = (cos_zenith > nighttime_threshold) & (cos_zenith <= twilight_threshold)
         
-        # Smooth sigmoid transition functions
-        night_factor = torch.sigmoid(-(cos_zenith - nighttime_threshold) * 20)
-        twilight_factor = torch.sigmoid((cos_zenith - nighttime_threshold) * 10) * torch.sigmoid(-(cos_zenith - twilight_threshold) * 10)
-        
-        # Reduced penalties with smooth transitions
+        # Stronger penalty for nighttime predictions
         nighttime_penalty = torch.where(
-            cos_zenith <= nighttime_threshold,
-            torch.abs(y_pred) * 10.0,  # Reduced nighttime penalty
+            nighttime_condition,
+            torch.abs(y_pred) * 1000.0,  # Increased penalty for nighttime
             torch.where(
-                cos_zenith <= twilight_threshold,
-                torch.abs(y_pred - self.solar_constant * cos_zenith) * 5.0 * twilight_factor,  # Reduced twilight penalty
+                twilight_condition,
+                torch.abs(y_pred - self.solar_constant * cos_zenith) * 100.0,  # Smooth transition
                 torch.zeros_like(y_pred)
             ))
 
@@ -203,26 +195,37 @@ class SolarPINN(nn.Module):
         boundary_weight = 0.15
         conservation_weight = 0.15
 
-        # Solar irradiance physics constraints
-        max_theoretical_irradiance = self.solar_constant
+        # Update efficiency bounds for expanded range
+        efficiency_min = 0.15  # 15%
+        efficiency_max = 0.25  # 25%
         
-        # Physical boundary conditions for irradiance
-        irradiance_lower = torch.relu(-y_pred)  # Penalty for negative irradiance
-        irradiance_upper = torch.relu(y_pred - max_theoretical_irradiance)  # Penalty for exceeding solar constant
+        # Exponential barrier functions for smoother gradients
+        efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
+        efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
         
-        # Solar energy conservation constraints
-        conservation_penalty = torch.abs(
-            y_pred - theoretical_irradiance
-        ) * torch.exp(-optical_depth * air_mass)  # Weight by atmospheric transmission
+        # Increased penalty weight for stricter enforcement (2000.0)
+        efficiency_penalty = (efficiency_lower + efficiency_upper) * 2000.0
+        
+        # Additional exponential barrier terms with higher penalties (5000.0)
+        additional_lower_barrier = torch.exp(-200 * (y_pred - efficiency_min))
+        additional_upper_barrier = torch.exp(200 * (y_pred - efficiency_max))
+        efficiency_penalty += (additional_lower_barrier + additional_upper_barrier) * 5000.0
 
-        # Updated total residual calculation focusing on solar irradiance physics
+        # Update clipping penalty
+        clipping_penalty = torch.mean(torch.abs(
+            y_pred - torch.clamp(y_pred, min=0.15, max=0.25)
+        )) * 100.0
+
+        # Update total_residual calculation
         total_residual = (
-            0.3 * spatial_residual +  # Spatial variation
-            0.3 * temporal_residual +  # Temporal dynamics
-            0.2 * (irradiance_lower + irradiance_upper) +  # Physical bounds
-            0.1 * conservation_residual**2 +  # Energy conservation
-            0.1 * conservation_penalty +  # Match with theoretical predictions
-            1.0 * nighttime_penalty  # Strong nighttime constraints
+            spatial_weight * spatial_residual +
+            temporal_weight * temporal_residual +
+            5.0 * physics_residual +
+            boundary_weight * (torch.relu(-y_pred) + torch.relu(y_pred - self.solar_constant)) +
+            conservation_weight * conservation_residual**2 +
+            10.0 * nighttime_penalty +
+            efficiency_penalty +  # Increased penalty weight
+            clipping_penalty  # Add hard clipping penalty
         )
 
         # Apply gradient clipping for stability

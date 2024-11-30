@@ -57,7 +57,7 @@ class DataProcessor:
         return torch.FloatTensor(data)
 
     def normalize_data(self, data):
-        """Normalize input data with log-scaling for appropriate variables"""
+        """Normalize input data to [-1, 1] range"""
         # Define normalization ranges for each variable
         ranges = np.array([
             [-90, 90],  # latitude
@@ -68,25 +68,20 @@ class DataProcessor:
             [0, 1]  # atmospheric transmission
         ])
 
-        # Apply log-scaling to appropriate variables (atmospheric transmission)
-        data_transformed = data.copy()
-        data_transformed[:, 5] = -np.log(1 - data_transformed[:, 5] + 1e-6)  # Log transform atmospheric transmission
-
         # Normalize to [-1, 1]
-        normalized = 2 * (data_transformed - ranges[:, 0]) / (ranges[:, 1] - ranges[:, 0]) - 1
+        normalized = 2 * (data - ranges[:, 0]) / (ranges[:, 1] -
+                                                  ranges[:, 0]) - 1
         return normalized
 
     def denormalize_predictions(self, predictions, scale_irradiance=True):
-        """Convert predictions to physical units using log-scaled transformation"""
-        # Apply smooth log-scaling denormalization
-        eps = 1e-6  # Small constant for numerical stability
-        log_scaled = torch.log1p(predictions + eps)  # log1p(x) = log(1 + x)
-        
-        # Scale to full irradiance range with smooth transition
-        max_irradiance = self.irradiance_scale
-        scaled = max_irradiance * torch.sigmoid(log_scaled)
-        
-        return scaled
+        """Convert predictions to physical units"""
+        if scale_irradiance:
+            # For irradiance predictions
+            return torch.clamp(predictions * self.irradiance_scale, min=0)
+        else:
+            # For efficiency, apply hard clipping after sigmoid
+            raw_efficiency = torch.sigmoid(predictions)
+            return torch.clamp(0.15 + (0.10 * raw_efficiency), min=0.15, max=0.25)
 
     def generate_training_data(self, n_samples=1000):
         """Generate synthetic training data with enhanced edge cases"""

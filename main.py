@@ -60,6 +60,10 @@ def main():
         slope, aspect, atm_transmission
     )
     
+    # Calculate accuracy metrics
+    relative_error = abs(prediction.item() - physics_irradiance) / physics_irradiance if physics_irradiance > 0 else float('inf')
+    accuracy_ratio = 1 - relative_error
+
     # Display results
     col1, col2 = st.columns(2)
     
@@ -70,6 +74,17 @@ def main():
     with col2:
         st.subheader("Physics Calculation")
         st.write(f"Physics-based Irradiance: {physics_irradiance:.2f} W/m²")
+    
+    # Display accuracy metrics with color coding
+    st.subheader("Accuracy Metrics")
+    if accuracy_ratio > 0.9:
+        st.success(f"Accuracy Ratio: {accuracy_ratio:.2%}")
+    elif accuracy_ratio > 0.7:
+        st.warning(f"Accuracy Ratio: {accuracy_ratio:.2%}")
+    else:
+        st.error(f"Accuracy Ratio: {accuracy_ratio:.2%}")
+    
+    st.write(f"Relative Error: {relative_error:.2%}")
     
     # Optimization analysis
     if st.button("Run Optimization Analysis"):

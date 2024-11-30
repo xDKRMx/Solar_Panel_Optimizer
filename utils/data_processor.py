@@ -65,7 +65,13 @@ class DataProcessor:
     
     def denormalize_predictions(self, predictions, scale_irradiance=True):
         """Convert predictions to physical units"""
-        # Predictions are already between 0 and 1 from sigmoid
+        # Handle tuple of (irradiance, efficiency) predictions
+        if isinstance(predictions, tuple):
+            irradiance, efficiency = predictions
+            if scale_irradiance:
+                return (irradiance * self.irradiance_scale, efficiency)
+            return (irradiance, efficiency)
+        # Handle single prediction (backwards compatibility)
         if scale_irradiance:
             return predictions * self.irradiance_scale
         return predictions

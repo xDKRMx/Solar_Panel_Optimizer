@@ -99,12 +99,21 @@ class SolarPINN(nn.Module):
         cos_theta, cos_zenith = self.cos_incidence_angle(
             lat, lon, time, slope, aspect)
 
-        # Strong nighttime penalty (when sun is below horizon)
-        nighttime_condition = (cos_zenith <= 0.001)
+        # Enhanced nighttime penalty with smooth transition
+        nighttime_threshold = 0.001
+        twilight_threshold = 0.1
+        nighttime_condition = (cos_zenith <= nighttime_threshold)
+        twilight_condition = (cos_zenith > nighttime_threshold) & (cos_zenith <= twilight_threshold)
+        
+        # Stronger penalty for nighttime predictions
         nighttime_penalty = torch.where(
             nighttime_condition,
-            torch.abs(y_pred) * 100.0,  # Strong penalty for non-zero predictions at night
-            torch.zeros_like(y_pred))
+            torch.abs(y_pred) * 1000.0,  # Increased penalty for nighttime
+            torch.where(
+                twilight_condition,
+                torch.abs(y_pred - self.solar_constant * cos_zenith) * 100.0,  # Smooth transition
+                torch.zeros_like(y_pred)
+            ))
 
         # Compute gradients for physics residual
         y_grad = torch.autograd.grad(y_pred.sum(),
@@ -139,15 +148,21 @@ class SolarPINN(nn.Module):
         source_term = y_grad[:, 2]
         conservation_residual = flux_divergence + source_term
 
-        # Calculate theoretical irradiance components
+        # Enhanced theoretical irradiance components for full spectrum
         direct_irradiance = (self.solar_constant * 
                            torch.exp(-optical_depth * air_mass) * 
                            cos_theta * cloud_transmission)
         
-        diffuse_irradiance = self.solar_constant * 0.3 * (1.0 - cloud_transmission) * cos_zenith
+        # Enhanced diffuse radiation model
+        diffuse_factor = 0.3 + 0.7 * cloud_cover  # Increased diffuse component with clouds
+        diffuse_irradiance = (self.solar_constant * diffuse_factor * 
+                            (1.0 - cloud_transmission) * cos_zenith *
+                            torch.exp(-optical_depth * air_mass * 0.5))  # Less attenuation for diffuse
         
-        ground_albedo = 0.2
-        reflected_irradiance = ground_albedo * direct_irradiance * (1.0 - cos_theta) * 0.5
+        # Enhanced ground reflection model
+        ground_albedo = 0.2 + 0.1 * cloud_cover  # Higher albedo under cloudy conditions
+        reflected_irradiance = (ground_albedo * (direct_irradiance + diffuse_irradiance) * 
+                              (1.0 - cos_theta) * 0.5)
 
         # Ensure proper cos_zenith clipping and set nighttime irradiance
         cos_zenith = torch.clamp(cos_zenith, min=0.001, max=1.0)

@@ -52,7 +52,14 @@ class SolarIrradianceCalculator:
         hour_rad = np.radians(hour_ang)
         cos_zenith = (np.sin(lat_rad) * np.sin(decl_rad) +
                      np.cos(lat_rad) * np.cos(decl_rad) * np.cos(hour_rad))
-        zenith_angle = np.arccos(np.clip(cos_zenith, -1.0, 1.0))
+        
+        # Check if it's nighttime (sun below horizon)
+        if cos_zenith <= 0:
+            return 0.0
+            
+        # Prevent division by zero in air mass calculation
+        cos_zenith = np.clip(cos_zenith, 0.001, 1.0)
+        zenith_angle = np.arccos(cos_zenith)
         
         # Calculate atmospheric effects
         air_mass = self.calculate_air_mass(zenith_angle)

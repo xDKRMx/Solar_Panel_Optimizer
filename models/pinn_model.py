@@ -128,8 +128,15 @@ class SolarPINN(nn.Module):
         ground_albedo = 0.2  # Average ground reflectance
         reflected_irradiance = ground_albedo * direct_irradiance * (1.0 - cos_theta) * 0.5
         
-        # Total theoretical irradiance
-        theoretical_irradiance = direct_irradiance + diffuse_irradiance + reflected_irradiance
+        # Ensure proper cos_zenith clipping for numerical stability
+        cos_zenith = torch.clamp(cos_zenith, min=0.001, max=1.0)
+        
+        # Set irradiance to 0 during nighttime
+        theoretical_irradiance = torch.where(
+            cos_zenith > 0,
+            direct_irradiance + diffuse_irradiance + reflected_irradiance,
+            torch.zeros_like(direct_irradiance)
+        )
         
         # Physics residuals
         spatial_residual = y_grad[:, 0]**2 + y_grad[:, 1]**2  # Spatial variation

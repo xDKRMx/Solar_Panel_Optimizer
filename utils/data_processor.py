@@ -13,7 +13,7 @@ class DataProcessor:
         self.time_scale = self.day_period
         self.irradiance_scale = self.solar_constant
         
-    def prepare_data(self, lat, lon, time, slope, aspect, atm):
+    def prepare_data(self, lat, lon, time, slope, aspect, atm, cloud_cover=None, wavelength=None):
         """Prepare and non-dimensionalize data for PINN model"""
         # Convert to numpy arrays if not already
         lat = np.asarray(lat)
@@ -23,13 +23,28 @@ class DataProcessor:
         aspect = np.asarray(aspect)
         atm = np.asarray(atm)
         
+        # Set default values if not provided
+        if cloud_cover is None:
+            cloud_cover = np.zeros_like(lat)
+        else:
+            cloud_cover = np.asarray(cloud_cover)
+        
+        if wavelength is None:
+            wavelength = np.full_like(lat, 0.5)  # Default wavelength in μm
+        else:
+            wavelength = np.asarray(wavelength)
+        
         # Non-dimensionalize the data
         time_nd = time / self.time_scale
+        wavelength_nd = wavelength / 0.5  # Normalize to reference wavelength
         
         # Angles (lat, lon, slope, aspect) are already non-dimensional
-        # Atmospheric transmission is already non-dimensional
+        # Atmospheric transmission, cloud cover are already non-dimensional
         
-        data = np.column_stack([lat, lon, time_nd, slope, aspect, atm])
+        data = np.column_stack([
+            lat, lon, time_nd, slope, aspect, atm, 
+            cloud_cover, wavelength_nd
+        ])
         return torch.FloatTensor(data)
     
     def normalize_data(self, data):

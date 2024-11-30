@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 
 class SolarPINN(nn.Module):
-    def __init__(self, input_dim=6):
+    def __init__(self, input_dim=8):  # Updated for cloud_cover and wavelength
         super(SolarPINN, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 64),
@@ -15,6 +15,9 @@ class SolarPINN(nn.Module):
             nn.Linear(64, 1)
         )
         self.solar_constant = 1367.0  # W/m²
+        self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
+        self.beta = 0.1  # Default aerosol optical thickness
+        self.alpha = 1.3  # Default Ångström exponent
         
     def forward(self, x):
         return self.net(x)
@@ -30,7 +33,7 @@ class SolarPINN(nn.Module):
         return torch.deg2rad(15 * (hour - 12) + lon)
     
     def cos_incidence_angle(self, lat, lon, time, slope, aspect):
-        """Calculate cosine of incidence angle (θ)"""
+        """Calculate cosine of incidence angle (θ) and zenith angle"""
         lat_rad = torch.deg2rad(lat)
         slope_rad = torch.deg2rad(slope)
         aspect_rad = torch.deg2rad(aspect)
@@ -38,18 +41,27 @@ class SolarPINN(nn.Module):
         declination = self.solar_declination(time)
         hour_angle = self.hour_angle(time, lon)
         
-        # cos(θ) = sin(φ)sin(δ) + cos(φ)cos(δ)cos(ω)
+        # Calculate cos(zenith) = sin(φ)sin(δ) + cos(φ)cos(δ)cos(ω)
+        cos_zenith = (torch.sin(lat_rad) * torch.sin(declination) +
+                     torch.cos(lat_rad) * torch.cos(declination) * torch.cos(hour_angle))
+        
+        # Calculate cos(θ) for tilted surface
         cos_theta = (torch.sin(lat_rad) * torch.sin(declination) * torch.cos(slope_rad) -
                     torch.cos(lat_rad) * torch.sin(declination) * torch.sin(slope_rad) * torch.cos(aspect_rad) +
                     torch.cos(lat_rad) * torch.cos(declination) * torch.cos(hour_angle) * torch.cos(slope_rad) +
                     torch.sin(lat_rad) * torch.cos(declination) * torch.cos(hour_angle) * torch.sin(slope_rad) * torch.cos(aspect_rad) +
                     torch.cos(declination) * torch.sin(hour_angle) * torch.sin(slope_rad) * torch.sin(aspect_rad))
         
-        return torch.clamp(cos_theta, min=0.0)
+        return torch.clamp(cos_theta, min=0.0), torch.clamp(cos_zenith, min=0.0001)  # Avoid division by zero
+    
+    def calculate_optical_depth(self, wavelength):
+        """Calculate optical depth using Ångström turbidity formula"""
+        return self.beta * (wavelength / self.ref_wavelength) ** (-self.alpha)
     
     def physics_loss(self, x, y_pred):
         # Extract parameters from input
-        lat, lon, time, slope, aspect, atm = x[:, 0], x[:, 1], x[:, 2], x[:, 3], x[:, 4], x[:, 5]
+        lat, lon, time, slope, aspect, atm, cloud_cover, wavelength = (
+            x[:, i] for i in range(8))
         
         # Compute gradients for physics residual
         y_grad = torch.autograd.grad(
@@ -57,21 +69,35 @@ class SolarPINN(nn.Module):
             create_graph=True, retain_graph=True
         )[0]
         
-        # Calculate theoretical irradiance based on physics
-        cos_theta = self.cos_incidence_angle(lat, lon, time, slope, aspect)
-        theoretical_irradiance = self.solar_constant * cos_theta * atm
+        # Calculate theoretical irradiance based on Beer-Lambert law
+        cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
+        
+        # Air mass ratio calculation
+        air_mass = 1.0 / cos_zenith
+        
+        # Calculate optical depth and cloud cover effect
+        optical_depth = self.calculate_optical_depth(wavelength)
+        cloud_transmission = 1.0 - 0.75 * (cloud_cover ** 3)
+        
+        # Beer-Lambert law implementation
+        theoretical_irradiance = (self.solar_constant * 
+                                torch.exp(-optical_depth * air_mass) * 
+                                cos_theta * 
+                                cloud_transmission)
         
         # Physics residuals
         spatial_residual = y_grad[:, 0]**2 + y_grad[:, 1]**2  # Spatial variation
         temporal_residual = y_grad[:, 2]  # Time variation
         physics_residual = y_pred - theoretical_irradiance  # Physics-based prediction
         boundary_residual = torch.relu(-y_pred)  # Non-negative constraint
+        max_irradiance_residual = torch.relu(y_pred - self.solar_constant)  # Maximum limit
         
         # Combine residuals with appropriate weights
-        total_residual = (0.3 * spatial_residual + 
-                         0.3 * temporal_residual + 
+        total_residual = (0.25 * spatial_residual + 
+                         0.25 * temporal_residual + 
                          0.3 * physics_residual**2 +
-                         0.1 * boundary_residual)
+                         0.1 * boundary_residual +
+                         0.1 * max_irradiance_residual)
         
         return torch.mean(total_residual)
 

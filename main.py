@@ -33,7 +33,10 @@ def main():
     aspect = st.sidebar.slider("Panel Aspect", 0.0, 360.0, 180.0)
     
     # Atmospheric parameters
+    st.sidebar.subheader("Atmospheric Parameters")
     atm_transmission = st.sidebar.slider("Atmospheric Transmission", 0.0, 1.0, 0.7)
+    cloud_cover = st.sidebar.slider("Cloud Cover", 0.0, 1.0, 0.0)
+    wavelength = st.sidebar.slider("Wavelength (μm)", 0.3, 1.0, 0.5)
     
     # Create input data
     input_data = processor.prepare_data(
@@ -42,7 +45,9 @@ def main():
         np.array([hour]),
         np.array([slope]),
         np.array([aspect]),
-        np.array([atm_transmission])
+        np.array([atm_transmission]),
+        np.array([cloud_cover]),
+        np.array([wavelength])
     )
     
     # Model prediction

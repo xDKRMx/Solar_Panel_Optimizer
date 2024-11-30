@@ -65,15 +65,10 @@ class DataProcessor:
     
     def denormalize_predictions(self, predictions, scale_irradiance=True):
         """Convert predictions to physical units"""
-        # Handle tuple of (irradiance, efficiency) predictions
+        # No additional scaling needed as the model now outputs in physical units
         if isinstance(predictions, tuple):
             irradiance, efficiency = predictions
-            if scale_irradiance:
-                return (irradiance * self.irradiance_scale, efficiency)
-            return (irradiance, efficiency)
-        # Handle single prediction (backwards compatibility)
-        if scale_irradiance:
-            return predictions * self.irradiance_scale
+            return irradiance, efficiency
         return predictions
     
     def generate_training_data(self, n_samples=1000):

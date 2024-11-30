@@ -24,9 +24,10 @@ class SolarPINN(nn.Module):
         
     def forward(self, x):
         features = self.net(x)
-        # Separate predictions for irradiance and efficiency
-        irradiance = self.solar_constant * torch.sigmoid(features[:, 0:1])  # Scale to [0, 1367]
-        efficiency = 0.15 + torch.sigmoid(features[:, 1:2]) * 0.10  # Scale to [0.15, 0.25]
+        # Proper scaling for irradiance (0 to 1367 W/m²)
+        irradiance = torch.sigmoid(features[:, 0:1]) * self.solar_constant
+        # Fixed efficiency range (15% to 25%)
+        efficiency = 0.15 + torch.sigmoid(features[:, 1:2]) * 0.10
         return irradiance, efficiency
     
     def solar_declination(self, time):

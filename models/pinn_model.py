@@ -23,23 +23,7 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
         
     def forward(self, x):
-        # Get raw network output
-        raw_output = self.net(x)
-        
-        # Split into efficiency and irradiance components
-        efficiency = 0.15 + torch.sigmoid(raw_output) * 0.10  # 15-25% range
-        
-        # Calculate cos_theta and cos_zenith for irradiance scaling
-        lat, lon, time = x[:, 0], x[:, 1], x[:, 2]
-        slope, aspect = x[:, 3], x[:, 4]
-        cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
-        
-        # Scale irradiance properly
-        theoretical_max = self.solar_constant * cos_zenith
-        scaled_irradiance = theoretical_max * efficiency
-        
-        # Zero out nighttime predictions
-        return torch.where(cos_zenith > 0.001, scaled_irradiance, torch.zeros_like(scaled_irradiance))
+        return self.net(x)
     
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -181,12 +165,11 @@ class SolarPINN(nn.Module):
         # Add stronger non-negative constraint
         non_negative_penalty = torch.mean(torch.relu(-y_pred)) * 10.0
         
-        # Add extremely strong efficiency range constraints
-        min_efficiency = 0.15
-        max_efficiency = 0.25
-        efficiency_range_penalty = (
-            torch.mean(torch.relu(-y_pred + min_efficiency)) * 1000.0 +  # Strong penalty below 15%
-            torch.mean(torch.relu(y_pred - max_efficiency)) * 1000.0     # Strong penalty above 25%
+        # Add efficiency range constraints after irradiance calculation
+        efficiency = y_pred / (theoretical_irradiance + 1e-6)  # Avoid division by zero
+        efficiency_penalty = (
+            torch.mean(torch.relu(-efficiency + 0.15)) * 50.0 +  # Below 15%
+            torch.mean(torch.relu(efficiency - 0.25)) * 50.0     # Above 25%
         )
         
         # Combine residuals with dynamic weights and additional constraints
@@ -196,7 +179,7 @@ class SolarPINN(nn.Module):
                          boundary_weight * (boundary_residual + max_irradiance_residual) +
                          conservation_weight * conservation_residual**2 +
                          non_negative_penalty * 50.0 +  # Increased weight for negative predictions
-                         efficiency_range_penalty +
+                         efficiency_penalty +
                          nighttime_penalty)
         
         # Apply gradient clipping for stability

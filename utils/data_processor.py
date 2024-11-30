@@ -64,19 +64,11 @@ class DataProcessor:
         return normalized
     
     def denormalize_predictions(self, predictions, scale_irradiance=True):
-        """Calculate efficiency based on denormalized irradiance"""
-        # Calculate efficiency based on denormalized irradiance
-        irradiance = predictions
-        
-        # Base efficiency calculation from irradiance (typical solar panel behavior)
-        base_efficiency = 0.20  # 20% baseline efficiency
-        
-        # Adjust efficiency based on irradiance level (typical behavior)
-        # Efficiency increases with irradiance up to a point, then plateaus
-        relative_irradiance = torch.clamp(irradiance / 1000.0, 0.0, 1.0)  # Normalize to 1000 W/m²
-        efficiency = 0.15 + (0.10 * torch.sigmoid(relative_irradiance * 3))  # Range: 15-25%
-        
-        return irradiance, efficiency
+        """Convert predictions to physical units"""
+        # Predictions are already between 0 and 1 from sigmoid
+        if scale_irradiance:
+            return predictions * self.irradiance_scale
+        return predictions
     
     def generate_training_data(self, n_samples=1000):
         """Generate synthetic training data with enhanced edge cases"""

@@ -52,17 +52,17 @@ def main():
     
     # Model prediction
     with torch.no_grad():
-        irradiance_pred, efficiency_pred = model(input_data)
-        irradiance_pred, efficiency_pred = processor.denormalize_predictions((irradiance_pred, efficiency_pred))
+        prediction = model(input_data)
+        prediction = processor.denormalize_predictions(prediction)
     
     # Calculate physics-based irradiance
     physics_irradiance = calculator.calculate_irradiance(
         latitude, longitude, day_number, hour,
-        slope, aspect, atm_transmission, cloud_cover, wavelength
+        slope, aspect, atm_transmission
     )
     
     # Calculate accuracy metrics
-    relative_error = abs(irradiance_pred.item() - physics_irradiance) / physics_irradiance if physics_irradiance > 0 else float('inf')
+    relative_error = abs(prediction.item() - physics_irradiance) / physics_irradiance if physics_irradiance > 0 else float('inf')
     accuracy_ratio = 1 - relative_error
 
     # Display results
@@ -70,9 +70,7 @@ def main():
     
     with col1:
         st.subheader("PINN Prediction")
-        st.write(f"Predicted Irradiance: {irradiance_pred.item():.2f} W/m²")
-        st.write(f"Predicted Efficiency: {efficiency_pred.item():.2%}")
-        st.write(f"Power Output: {(irradiance_pred.item() * efficiency_pred.item()):.2f} W/m²")
+        st.write(f"Predicted Irradiance: {prediction.item():.2f} W/m²")
     
     with col2:
         st.subheader("Physics Calculation")
@@ -94,7 +92,7 @@ def main():
         slopes = np.linspace(0, 90, 30)
         aspects = np.linspace(0, 360, 30)
         
-        power_output = np.zeros((30, 30))
+        efficiency = np.zeros((30, 30))
         for i, s in enumerate(slopes):
             for j, a in enumerate(aspects):
                 input_data = processor.prepare_data(
@@ -103,26 +101,22 @@ def main():
                     np.array([hour]),
                     np.array([s]),
                     np.array([a]),
-                    np.array([atm_transmission]),
-                    np.array([cloud_cover]),
-                    np.array([wavelength])
+                    np.array([atm_transmission])
                 )
                 with torch.no_grad():
-                    irr, eff = model(input_data)
-                    irr, eff = processor.denormalize_predictions((irr, eff))
-                    power_output[i, j] = (irr * eff).item()
+                    efficiency[i, j] = model(input_data).item()
         
         # Plot optimization results
-        fig = plotter.plot_optimization_results(slopes, aspects, power_output)
+        fig = plotter.plot_optimization_results(slopes, aspects, efficiency)
         st.plotly_chart(fig)
         
         # Find optimal parameters
-        opt_idx = np.unravel_index(np.argmax(power_output), power_output.shape)
+        opt_idx = np.unravel_index(np.argmax(efficiency), efficiency.shape)
         st.success(f"""
         Optimal Parameters:
         - Slope: {slopes[opt_idx[0]]:.1f}°
         - Aspect: {aspects[opt_idx[1]]:.1f}°
-        - Expected Power Output: {power_output[opt_idx]:.2f} W/m²
+        - Expected Efficiency: {efficiency[opt_idx]:.2f}
         """)
 
 if __name__ == "__main__":

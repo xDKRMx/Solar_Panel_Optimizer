@@ -53,6 +53,7 @@ def main():
     # Model prediction
     with torch.no_grad():
         prediction = model(input_data)
+        prediction = processor.denormalize_predictions(prediction)
     
     # Calculate physics-based irradiance
     physics_irradiance = calculator.calculate_irradiance(

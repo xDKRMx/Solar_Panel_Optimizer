@@ -23,7 +23,8 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
         
     def forward(self, x):
-        return self.net(x)
+        # Add tanh activation to constrain output to [-1, 1]
+        return torch.tanh(self.net(x))
     
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""

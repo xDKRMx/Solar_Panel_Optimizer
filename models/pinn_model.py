@@ -20,15 +20,12 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
 
     def forward(self, x):
-        # Use custom activation to ensure output is properly bounded
         raw_output = self.net(x)
         if self.training:
-            # During training, allow wider range for better gradient flow
             return torch.sigmoid(raw_output)
         else:
-            # During inference, strictly enforce efficiency range
-            normalized = torch.sigmoid(raw_output)
-            return 0.15 + (0.10 * normalized)
+            # Strict enforcement during inference
+            return torch.clamp(0.15 + (0.10 * torch.sigmoid(raw_output)), min=0.15, max=0.25)
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -194,7 +191,12 @@ class SolarPINN(nn.Module):
         efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
         efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
         
-        efficiency_penalty = (efficiency_lower + efficiency_upper) * 50.0
+        efficiency_penalty = (efficiency_lower + efficiency_upper) * 200.0  # Increased from 50.0
+
+        # Add hard clipping term
+        clipping_penalty = torch.mean(torch.abs(
+            y_pred - torch.clamp(y_pred, min=0.15, max=0.25)
+        )) * 100.0
 
         # Update total_residual calculation
         total_residual = (
@@ -204,7 +206,8 @@ class SolarPINN(nn.Module):
             boundary_weight * (torch.relu(-y_pred) + torch.relu(y_pred - self.solar_constant)) +
             conservation_weight * conservation_residual**2 +
             10.0 * nighttime_penalty +
-            efficiency_penalty  # Add efficiency penalty
+            efficiency_penalty +  # Increased penalty weight
+            clipping_penalty  # Add hard clipping penalty
         )
 
         # Apply gradient clipping for stability

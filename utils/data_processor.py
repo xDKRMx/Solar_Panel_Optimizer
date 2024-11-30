@@ -74,17 +74,14 @@ class DataProcessor:
         return normalized
 
     def denormalize_predictions(self, predictions, scale_irradiance=True):
-        """Convert predictions to physical units with separate scaling"""
+        """Convert predictions to physical units"""
         if scale_irradiance:
-            # For irradiance predictions, use full range normalization
-            return torch.clamp(predictions * self.irradiance_scale, min=0, max=self.solar_constant)
+            # For irradiance predictions
+            return torch.clamp(predictions * self.irradiance_scale, min=0)
         else:
-            # For efficiency, use softplus for smooth positive output and scale to efficiency range
-            efficiency_range = (0.25 - 0.15)  # 10% range
-            base_efficiency = 0.15  # minimum efficiency
-            scaled_efficiency = torch.nn.functional.softplus(predictions)
-            normalized_efficiency = scaled_efficiency / (1 + scaled_efficiency)  # bound to (0,1)
-            return base_efficiency + (efficiency_range * normalized_efficiency)
+            # For efficiency, apply hard clipping after sigmoid
+            raw_efficiency = torch.sigmoid(predictions)
+            return torch.clamp(0.15 + (0.10 * raw_efficiency), min=0.15, max=0.25)
 
     def generate_training_data(self, n_samples=1000):
         """Generate synthetic training data with enhanced edge cases"""

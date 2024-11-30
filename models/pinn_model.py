@@ -7,19 +7,10 @@ class SolarPINN(nn.Module):
 
     def __init__(self, input_dim=8):  # Updated for cloud_cover and wavelength
         super(SolarPINN, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 128),
-            nn.LeakyReLU(0.1),
-            nn.Linear(128, 256),
-            nn.LeakyReLU(0.1),
-            nn.Linear(256, 512),
-            nn.LeakyReLU(0.1),
-            nn.Linear(512, 256),
-            nn.LeakyReLU(0.1),
-            nn.Linear(256, 128),
-            nn.LeakyReLU(0.1),
-            nn.Linear(128, 1)
-        )
+        self.net = nn.Sequential(nn.Linear(input_dim, 64), nn.Tanh(),
+                                 nn.Linear(64, 128), nn.Tanh(),
+                                 nn.Linear(128, 64), nn.Tanh(),
+                                 nn.Linear(64, 1))
         self.solar_constant = 1367.0  # W/m²
         self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
         self.beta = 0.1  # Default aerosol optical thickness
@@ -29,8 +20,9 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
 
     def forward(self, x):
-        # Direct output without sigmoid to allow full range predictions
-        return self.net(x)
+        raw_output = self.net(x)
+        # Let data_processor handle efficiency clipping
+        return torch.sigmoid(raw_output)
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -179,29 +171,11 @@ class SolarPINN(nn.Module):
             direct_irradiance + diffuse_irradiance + reflected_irradiance,
             torch.zeros_like(direct_irradiance))
 
-        # Enhanced nighttime constraints with smooth transition
-        nighttime_threshold = 0.001
-        twilight_threshold = 0.1
-        
+        # Strengthen nighttime constraint with increased penalty
         nighttime_penalty = torch.where(
-            cos_zenith <= nighttime_threshold,
-            torch.abs(y_pred) * 2000.0,  # Stronger penalty for complete darkness
-            torch.where(
-                cos_zenith <= twilight_threshold,
-                torch.abs(y_pred - theoretical_irradiance) * 1000.0,  # Strong penalty in twilight
-                torch.abs(y_pred - theoretical_irradiance) * 100.0  # Normal penalty in daylight
-            )
-        )
-        
-        # Add explicit range constraints
-        range_penalty = torch.where(
-            y_pred < 0,
-            torch.abs(y_pred) * 1000.0,  # Strong penalty for negative values
-            torch.where(
-                y_pred > self.solar_constant,
-                (y_pred - self.solar_constant) * 1000.0,  # Strong penalty for exceeding maximum
-                torch.zeros_like(y_pred)
-            )
+            cos_zenith <= 0.001,
+            torch.abs(y_pred) * 1000.0,  # Increased penalty for non-zero nighttime predictions
+            torch.zeros_like(y_pred)
         )
 
         # Physics residuals

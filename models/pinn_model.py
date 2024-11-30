@@ -23,11 +23,17 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
         
     def forward(self, x):
-        # Use sigmoid for base scaling, then enforce efficiency range
-        raw_output = torch.sigmoid(self.net(x))
-        # Scale to efficiency range (15-25%)
-        scaled_output = 0.15 + raw_output * 0.10  # Maps [0,1] to [0.15,0.25]
-        return scaled_output
+        # Use scaled sigmoid to predict full irradiance range
+        raw_output = self.net(x)
+        # Scale to full irradiance range [0, 1367 W/m²]
+        return 1367.0 * torch.sigmoid(raw_output)
+
+    def calculate_efficiency(self, irradiance):
+        """Calculate efficiency based on raw irradiance prediction"""
+        # Apply typical solar panel efficiency range (15-25%)
+        base_efficiency = 0.15
+        efficiency_range = 0.10
+        return base_efficiency + efficiency_range * torch.sigmoid(irradiance/1367.0)
     
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -166,16 +172,15 @@ class SolarPINN(nn.Module):
         boundary_weight = 0.15
         conservation_weight = 0.15
 
-        # Add stronger non-negative constraint
-        non_negative_penalty = torch.mean(torch.relu(-y_pred)) * 10.0
-        
-        # Add extremely strong efficiency range constraints
-        min_efficiency = 0.15
-        max_efficiency = 0.25
-        efficiency_range_penalty = (
-            torch.mean(torch.relu(-y_pred + min_efficiency)) * 1000.0 +  # Strong penalty below 15%
-            torch.mean(torch.relu(y_pred - max_efficiency)) * 1000.0     # Strong penalty above 25%
+        # Add stronger nighttime penalty with exponential scaling
+        nighttime_penalty = torch.where(
+            nighttime_condition,
+            y_pred * torch.exp(y_pred/100) * 1000.0,  # Exponential penalty for non-zero nighttime predictions
+            torch.zeros_like(y_pred)
         )
+        
+        # Add non-negative constraint with increased weight
+        non_negative_penalty = torch.mean(torch.relu(-y_pred)) * 100.0
         
         # Combine residuals with dynamic weights and additional constraints
         total_residual = (spatial_weight * spatial_residual + 
@@ -183,8 +188,7 @@ class SolarPINN(nn.Module):
                          physics_weight * physics_residual**2 +
                          boundary_weight * (boundary_residual + max_irradiance_residual) +
                          conservation_weight * conservation_residual**2 +
-                         non_negative_penalty * 50.0 +  # Increased weight for negative predictions
-                         efficiency_range_penalty +
+                         non_negative_penalty +
                          nighttime_penalty)
         
         # Apply gradient clipping for stability

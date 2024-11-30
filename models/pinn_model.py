@@ -12,7 +12,7 @@ class SolarPINN(nn.Module):
             nn.Tanh(),
             nn.Linear(128, 64),
             nn.Tanh(),
-            nn.Linear(64, 1)
+            nn.Linear(64, 2)  # Output both irradiance and efficiency
         )
         self.solar_constant = 1367.0  # W/m²
         self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
@@ -23,11 +23,11 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
         
     def forward(self, x):
-        # Use sigmoid for base scaling, then enforce efficiency range
-        raw_output = torch.sigmoid(self.net(x))
-        # Scale to efficiency range (15-25%)
-        scaled_output = 0.15 + raw_output * 0.10  # Maps [0,1] to [0.15,0.25]
-        return scaled_output
+        features = self.net(x)
+        # Separate predictions for irradiance and efficiency
+        irradiance = self.solar_constant * torch.sigmoid(features[:, 0:1])  # Scale to [0, 1367]
+        efficiency = 0.15 + torch.sigmoid(features[:, 1:2]) * 0.10  # Scale to [0.15, 0.25]
+        return irradiance, efficiency
     
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -80,7 +80,7 @@ class SolarPINN(nn.Module):
         
         return base_depth * air_mass_factor + cloud_scatter
     
-    def physics_loss(self, x, y_pred):
+    def physics_loss(self, x, irradiance_pred, efficiency_pred):
         # Extract parameters from input
         lat, lon, time, slope, aspect, atm, cloud_cover, wavelength = (
             x[:, i] for i in range(8))
@@ -92,13 +92,13 @@ class SolarPINN(nn.Module):
         nighttime_condition = (cos_zenith <= 0.001)
         nighttime_penalty = torch.where(
             nighttime_condition,
-            torch.abs(y_pred) * 100.0,  # Strong penalty for non-zero predictions at night
-            torch.zeros_like(y_pred)
+            torch.abs(irradiance_pred) * 100.0,  # Strong penalty for non-zero predictions at night
+            torch.zeros_like(irradiance_pred)
         )
         
         # Compute gradients for physics residual
-        y_grad = torch.autograd.grad(
-            y_pred.sum(), x, 
+        irr_grad = torch.autograd.grad(
+            irradiance_pred.sum(), x, 
             create_graph=True, retain_graph=True
         )[0]
         
@@ -177,15 +177,24 @@ class SolarPINN(nn.Module):
             torch.mean(torch.relu(y_pred - max_efficiency)) * 1000.0     # Strong penalty above 25%
         )
         
-        # Combine residuals with dynamic weights and additional constraints
-        total_residual = (spatial_weight * spatial_residual + 
-                         temporal_weight * temporal_residual + 
-                         physics_weight * physics_residual**2 +
-                         boundary_weight * (boundary_residual + max_irradiance_residual) +
-                         conservation_weight * conservation_residual**2 +
-                         non_negative_penalty * 50.0 +  # Increased weight for negative predictions
-                         efficiency_range_penalty +
-                         nighttime_penalty)
+        # Separate constraints for irradiance and efficiency
+        irradiance_constraints = (
+            spatial_weight * spatial_residual + 
+            temporal_weight * temporal_residual + 
+            physics_weight * physics_residual**2 +
+            boundary_weight * (boundary_residual + max_irradiance_residual) +
+            conservation_weight * conservation_residual**2 +
+            nighttime_penalty
+        )
+        
+        efficiency_constraints = (
+            torch.mean(torch.relu(-efficiency_pred + 0.15)) * 1000.0 +  # Min efficiency
+            torch.mean(torch.relu(efficiency_pred - 0.25)) * 1000.0     # Max efficiency
+        )
+        
+        # Final output power and total residual
+        power_output = irradiance_pred * efficiency_pred
+        total_residual = irradiance_constraints + efficiency_constraints
         
         # Apply gradient clipping for stability
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
@@ -226,13 +235,14 @@ class PINNTrainer:
     def train_step(self, x_data, y_data):
         self.optimizer.zero_grad()
         
-        # Forward pass
-        y_pred = self.model(x_data)
+        # Forward pass with separate irradiance and efficiency predictions
+        irradiance_pred, efficiency_pred = self.model(x_data)
+        power_output = irradiance_pred * efficiency_pred
         
         # Compute losses
-        mse = self.mse_loss(y_pred, y_data)
-        physics_loss = self.model.physics_loss(x_data, y_pred)
-        boundary_loss = self.boundary_loss(x_data, y_pred)
+        mse = self.mse_loss(power_output, y_data)
+        physics_loss = self.model.physics_loss(x_data, irradiance_pred, efficiency_pred)
+        boundary_loss = self.boundary_loss(x_data, power_output)
         
         # Total loss with weights
         total_loss = (self.w_data * mse + 

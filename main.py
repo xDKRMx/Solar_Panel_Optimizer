@@ -29,8 +29,11 @@ def main():
     
     def show_map_dialog():
         if st.session_state.show_map:
-            with st.dialog("Location Selection Map", on_close=lambda: setattr(st.session_state, 'show_map', False)):
-                st.subheader("Select Location on Map")
+            with st.container():
+                st.subheader("Location Selection Map")
+                if st.button("Close Map"):
+                    st.session_state.show_map = False
+                    st.rerun()
                 
                 # Create base map centered at current location
                 m = folium.Map(location=[st.session_state.selected_location['lat'], 

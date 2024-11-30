@@ -64,20 +64,15 @@ class DataProcessor:
         return normalized
     
     def denormalize_predictions(self, predictions, scale_irradiance=True):
-        # First get raw predictions in [0,1]
-        raw_predictions = torch.clamp(predictions, 0, 1)
+        # Step 2: Re-dimensionalize to irradiance [0, 1367 W/m²]
+        irradiance = predictions * self.irradiance_scale
         
-        if scale_irradiance:
-            # First calculate irradiance and constrain it to [100, 200] W/m²
-            irradiance = 100 + 100 * raw_predictions  # Maps [0,1] to [100,200]
-            
-            # Then calculate efficiency (40-50%)
-            efficiency = 0.40 + 0.10 * raw_predictions  # Maps [0,1] to [0.40,0.50]
-            
-            # Apply efficiency to get final output
-            return irradiance * efficiency
+        # Step 3: Apply efficiency constraints (15-25%)
+        min_efficiency = 0.15
+        max_efficiency = 0.25
+        efficiency_scaled = min_efficiency + (max_efficiency - min_efficiency) * predictions
         
-        return raw_predictions
+        return efficiency_scaled * irradiance if scale_irradiance else predictions
     
     def generate_training_data(self, n_samples=1000):
         """Generate synthetic training data with enhanced edge cases"""

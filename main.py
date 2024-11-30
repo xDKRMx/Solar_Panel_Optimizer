@@ -21,22 +21,64 @@ def main():
     st.sidebar.header("Parameters")
     
     # Location parameters
-    latitude = st.sidebar.slider("Latitude", -90.0, 90.0, 0.0)
-    longitude = st.sidebar.slider("Longitude", -180.0, 180.0, 0.0)
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        latitude = st.number_input("Latitude", min_value=-90.0, max_value=90.0, value=0.0, step=0.1)
+    with col2:
+        latitude = st.slider("Latitude Slider", -90.0, 90.0, latitude)
+
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        longitude = st.number_input("Longitude", min_value=-180.0, max_value=180.0, value=0.0, step=0.1)
+    with col2:
+        longitude = st.slider("Longitude Slider", -180.0, 180.0, longitude)
     
     # Time parameters
-    day_number = st.sidebar.slider("Day of Year", 1, 365, 182)
-    hour = st.sidebar.slider("Hour of Day", 0, 24, 12)
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        day_number = st.number_input("Day of Year", min_value=1, max_value=365, value=182, step=1)
+    with col2:
+        day_number = st.slider("Day Slider", 1, 365, day_number)
+
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        hour = st.number_input("Hour of Day", min_value=0, max_value=24, value=12, step=1)
+    with col2:
+        hour = st.slider("Hour Slider", 0, 24, hour)
     
     # Installation parameters
-    slope = st.sidebar.slider("Panel Slope", 0.0, 90.0, 30.0)
-    aspect = st.sidebar.slider("Panel Aspect", 0.0, 360.0, 180.0)
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        slope = st.number_input("Panel Slope", min_value=0.0, max_value=90.0, value=30.0, step=0.1)
+    with col2:
+        slope = st.slider("Slope Slider", 0.0, 90.0, slope)
+
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        aspect = st.number_input("Panel Aspect", min_value=0.0, max_value=360.0, value=180.0, step=0.1)
+    with col2:
+        aspect = st.slider("Aspect Slider", 0.0, 360.0, aspect)
     
     # Atmospheric parameters
     st.sidebar.subheader("Atmospheric Parameters")
-    atm_transmission = st.sidebar.slider("Atmospheric Transmission", 0.0, 1.0, 0.7)
-    cloud_cover = st.sidebar.slider("Cloud Cover", 0.0, 1.0, 0.0)
-    wavelength = st.sidebar.slider("Wavelength (μm)", 0.3, 1.0, 0.5)
+    
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        atm_transmission = st.number_input("Atmospheric Transmission", min_value=0.0, max_value=1.0, value=0.7, step=0.01)
+    with col2:
+        atm_transmission = st.slider("Transmission Slider", 0.0, 1.0, atm_transmission)
+
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        cloud_cover = st.number_input("Cloud Cover", min_value=0.0, max_value=1.0, value=0.0, step=0.01)
+    with col2:
+        cloud_cover = st.slider("Cloud Cover Slider", 0.0, 1.0, cloud_cover)
+
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        wavelength = st.number_input("Wavelength (μm)", min_value=0.3, max_value=1.0, value=0.5, step=0.01)
+    with col2:
+        wavelength = st.slider("Wavelength Slider", 0.3, 1.0, wavelength)
     
     # Create input data
     input_data = processor.prepare_data(

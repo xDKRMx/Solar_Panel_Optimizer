@@ -64,15 +64,11 @@ class DataProcessor:
         return normalized
     
     def denormalize_predictions(self, predictions, scale_irradiance=True):
-        # Step 2: Re-dimensionalize to irradiance [0, 1367 W/m²]
-        irradiance = predictions * self.irradiance_scale
-        
-        # Step 3: Apply efficiency constraints (15-25%)
-        min_efficiency = 0.15
-        max_efficiency = 0.25
-        efficiency_scaled = min_efficiency + (max_efficiency - min_efficiency) * predictions
-        
-        return efficiency_scaled * irradiance if scale_irradiance else predictions
+        """Convert predictions to physical units"""
+        # Predictions are already between 0 and 1 from sigmoid
+        if scale_irradiance:
+            return predictions * self.irradiance_scale
+        return predictions
     
     def generate_training_data(self, n_samples=1000):
         """Generate synthetic training data with enhanced edge cases"""

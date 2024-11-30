@@ -78,8 +78,8 @@ class DataProcessor:
         if scale_irradiance:
             return torch.clamp(predictions, 0) * self.irradiance_scale
         else:
-            # For efficiency, strictly enforce 15-25% range with hard clipping
-            return torch.clamp(0.15 + (0.10 * torch.sigmoid(predictions)), min=0.15, max=0.25)
+            # For efficiency, strictly enforce 17-19% range with hard clipping
+            return torch.clamp(0.17 + (0.02 * torch.sigmoid(predictions)), min=0.17, max=0.19)
 
     def generate_training_data(self, n_samples=1000):
         """Generate synthetic training data with enhanced edge cases"""

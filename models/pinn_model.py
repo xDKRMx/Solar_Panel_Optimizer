@@ -21,8 +21,8 @@ class SolarPINN(nn.Module):
 
     def forward(self, x):
         raw_output = self.net(x)
-        # Let data_processor handle efficiency clipping
-        return torch.sigmoid(raw_output)
+        # Use ReLU to ensure non-negative output while allowing full range
+        return torch.relu(raw_output)
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -216,16 +216,14 @@ class SolarPINN(nn.Module):
             y_pred - torch.clamp(y_pred, min=0.15, max=0.25)
         )) * 100.0
 
-        # Update total_residual calculation
+        # Update total_residual calculation with relaxed constraints
         total_residual = (
             spatial_weight * spatial_residual +
             temporal_weight * temporal_residual +
-            5.0 * physics_residual +
-            boundary_weight * (torch.relu(-y_pred) + torch.relu(y_pred - self.solar_constant)) +
+            2.0 * physics_residual +  # Reduced weight to allow more flexibility
+            boundary_weight * torch.relu(-y_pred) +  # Only penalize negative values
             conservation_weight * conservation_residual**2 +
-            10.0 * nighttime_penalty +
-            efficiency_penalty +  # Increased penalty weight
-            clipping_penalty  # Add hard clipping penalty
+            5.0 * nighttime_penalty  # Reduced nighttime penalty
         )
 
         # Apply gradient clipping for stability

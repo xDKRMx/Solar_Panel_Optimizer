@@ -18,6 +18,9 @@ class SolarPINN(nn.Module):
         self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
         self.beta = 0.1  # Default aerosol optical thickness
         self.alpha = 1.3  # Default Ångström exponent
+        self.cloud_alpha = 0.85  # Empirically derived cloud transmission parameter
+        self.ref_temp = 25.0  # Reference temperature (°C)
+        self.temp_coeff = 0.004  # Temperature coefficient (/°C)
         
     def forward(self, x):
         return self.net(x)
@@ -54,9 +57,10 @@ class SolarPINN(nn.Module):
         
         return torch.clamp(cos_theta, min=0.0), torch.clamp(cos_zenith, min=0.0001)  # Avoid division by zero
     
-    def calculate_optical_depth(self, wavelength):
-        """Calculate optical depth using Ångström turbidity formula"""
-        return self.beta * (wavelength / self.ref_wavelength) ** (-self.alpha)
+    def calculate_optical_depth(self, wavelength, air_mass):
+        """Calculate multi-wavelength optical depth with air mass dependency"""
+        base_depth = self.beta * (wavelength / self.ref_wavelength) ** (-self.alpha)
+        return base_depth * torch.exp(-base_depth * air_mass)
     
     def physics_loss(self, x, y_pred):
         # Extract parameters from input
@@ -72,12 +76,25 @@ class SolarPINN(nn.Module):
         # Calculate theoretical irradiance based on Beer-Lambert law
         cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
         
-        # Air mass ratio calculation
-        air_mass = 1.0 / cos_zenith
+        # Air mass ratio calculation using Kasten and Young's formula
+        zenith_angle = torch.acos(cos_zenith)
+        zenith_deg = torch.rad2deg(zenith_angle)
+        air_mass = 1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364))
         
         # Calculate optical depth and cloud cover effect
-        optical_depth = self.calculate_optical_depth(wavelength)
-        cloud_transmission = 1.0 - 0.75 * (cloud_cover ** 3)
+        optical_depth = self.calculate_optical_depth(wavelength, air_mass)
+        cloud_transmission = 1.0 - self.cloud_alpha * (cloud_cover ** 3)
+
+        # Calculate second-order derivatives for energy flux conservation
+        y_grad2 = torch.autograd.grad(
+            y_grad.sum(), x,
+            create_graph=True, retain_graph=True
+        )[0]
+        
+        # Energy flux conservation: ∇⋅(q) + S = 0
+        flux_divergence = y_grad2[:, 0] + y_grad2[:, 1]  # ∂²I/∂x² + ∂²I/∂y²
+        source_term = y_grad[:, 2]  # ∂I/∂t (temporal variation as source)
+        conservation_residual = flux_divergence + source_term
         
         # Beer-Lambert law implementation
         theoretical_irradiance = (self.solar_constant * 
@@ -92,12 +109,22 @@ class SolarPINN(nn.Module):
         boundary_residual = torch.relu(-y_pred)  # Non-negative constraint
         max_irradiance_residual = torch.relu(y_pred - self.solar_constant)  # Maximum limit
         
-        # Combine residuals with appropriate weights
-        total_residual = (0.25 * spatial_residual + 
-                         0.25 * temporal_residual + 
-                         0.3 * physics_residual**2 +
-                         0.1 * boundary_residual +
-                         0.1 * max_irradiance_residual)
+        # Dynamic weighting based on training progress
+        spatial_weight = 0.2 * torch.exp(-conservation_residual.abs().mean())
+        temporal_weight = 0.2 * torch.exp(-temporal_residual.abs().mean())
+        physics_weight = 0.3 * (1 - torch.exp(-physics_residual.abs().mean()))
+        boundary_weight = 0.15
+        conservation_weight = 0.15
+
+        # Combine residuals with dynamic weights
+        total_residual = (spatial_weight * spatial_residual + 
+                         temporal_weight * temporal_residual + 
+                         physics_weight * physics_residual**2 +
+                         boundary_weight * (boundary_residual + max_irradiance_residual) +
+                         conservation_weight * conservation_residual**2)
+        
+        # Apply gradient clipping for stability
+        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
         
         return torch.mean(total_residual)
 

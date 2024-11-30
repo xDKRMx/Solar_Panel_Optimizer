@@ -195,7 +195,7 @@ class SolarPINN(nn.Module):
 
         # Update clipping penalty
         clipping_penalty = torch.mean(torch.abs(
-            y_pred - torch.clamp(y_pred, min=0.17, max=0.19)
+            y_pred - torch.clamp(y_pred, min=0.15, max=0.25)
         )) * 100.0
 
         # Update total_residual calculation

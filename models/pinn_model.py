@@ -23,11 +23,23 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
         
     def forward(self, x):
-        # Use sigmoid for base scaling, then enforce efficiency range
-        raw_output = torch.sigmoid(self.net(x))
-        # Scale to efficiency range (15-25%)
-        scaled_output = 0.15 + raw_output * 0.10  # Maps [0,1] to [0.15,0.25]
-        return scaled_output
+        # Get raw network output
+        raw_output = self.net(x)
+        
+        # Split into efficiency and irradiance components
+        efficiency = 0.15 + torch.sigmoid(raw_output) * 0.10  # 15-25% range
+        
+        # Calculate cos_theta and cos_zenith for irradiance scaling
+        lat, lon, time = x[:, 0], x[:, 1], x[:, 2]
+        slope, aspect = x[:, 3], x[:, 4]
+        cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
+        
+        # Scale irradiance properly
+        theoretical_max = self.solar_constant * cos_zenith
+        scaled_irradiance = theoretical_max * efficiency
+        
+        # Zero out nighttime predictions
+        return torch.where(cos_zenith > 0.001, scaled_irradiance, torch.zeros_like(scaled_irradiance))
     
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""

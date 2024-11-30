@@ -24,8 +24,8 @@ class SolarPINN(nn.Module):
         if self.training:
             return torch.sigmoid(raw_output)
         else:
-            # Strict enforcement during inference for typical solar panel range
-            return torch.clamp(0.17 + (0.02 * torch.sigmoid(raw_output)), min=0.17, max=0.19)
+            # Expanded efficiency range (15-25%)
+            return torch.clamp(0.15 + (0.10 * torch.sigmoid(raw_output)), min=0.15, max=0.25)
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -183,19 +183,25 @@ class SolarPINN(nn.Module):
         boundary_weight = 0.15
         conservation_weight = 0.15
 
-        # Update efficiency bounds for typical solar panels
-        efficiency_min = 0.17  # 17%
-        efficiency_max = 0.19  # 19%
+        # Update efficiency bounds for expanded range
+        efficiency_min = 0.15  # 15%
+        efficiency_max = 0.25  # 25%
         
         # Exponential barrier functions for smoother gradients
         efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
         efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
         
-        efficiency_penalty = (efficiency_lower + efficiency_upper) * 200.0
+        # Increased penalty weight for stricter enforcement
+        efficiency_penalty = (efficiency_lower + efficiency_upper) * 1000.0
+        
+        # Additional exponential barrier terms for stronger enforcement
+        additional_lower_barrier = torch.exp(-200 * (y_pred - efficiency_min))
+        additional_upper_barrier = torch.exp(200 * (y_pred - efficiency_max))
+        efficiency_penalty += (additional_lower_barrier + additional_upper_barrier) * 500.0
 
         # Update clipping penalty
         clipping_penalty = torch.mean(torch.abs(
-            y_pred - torch.clamp(y_pred, min=0.17, max=0.19)
+            y_pred - torch.clamp(y_pred, min=0.15, max=0.25)
         )) * 100.0
 
         # Update total_residual calculation

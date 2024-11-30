@@ -58,10 +58,24 @@ class SolarPINN(nn.Module):
         
         return torch.clamp(cos_theta, min=0.0), torch.clamp(cos_zenith, min=0.0001)  # Avoid division by zero
     
-    def calculate_optical_depth(self, wavelength, air_mass):
-        """Calculate multi-wavelength optical depth with air mass dependency"""
+    def calculate_optical_depth(self, wavelength, air_mass, altitude=0, cloud_cover=0):
+        """Calculate advanced multi-wavelength optical depth with cloud and altitude effects"""
+        # Base optical depth using Ångström turbidity formula
         base_depth = self.beta * (wavelength / self.ref_wavelength) ** (-self.alpha)
-        return base_depth * torch.exp(-base_depth * air_mass)
+        
+        # Altitude correction (exponential decrease with height)
+        altitude_factor = torch.exp(-altitude / 7.4)  # 7.4 km scale height
+        
+        # Enhanced cloud model with altitude dependency
+        cloud_factor = 1.0 + (cloud_cover ** 2) * (1.0 - 0.5 * altitude_factor)
+        
+        # Air mass dependency with cloud-modified saturation
+        air_mass_factor = torch.exp(-base_depth * air_mass * altitude_factor * cloud_factor)
+        
+        # Additional wavelength-dependent cloud scattering
+        cloud_scatter = 0.2 * cloud_cover * (wavelength / self.ref_wavelength) ** (-0.75)
+        
+        return base_depth * air_mass_factor + cloud_scatter
     
     def physics_loss(self, x, y_pred):
         # Extract parameters from input
@@ -82,9 +96,13 @@ class SolarPINN(nn.Module):
         zenith_deg = torch.rad2deg(zenith_angle)
         air_mass = 1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364))
         
-        # Calculate optical depth and cloud cover effect
-        optical_depth = self.calculate_optical_depth(wavelength, air_mass)
-        cloud_transmission = 1.0 - self.cloud_alpha * (cloud_cover ** 3)
+        # Calculate optical depth with enhanced cloud physics
+        optical_depth = self.calculate_optical_depth(wavelength, air_mass, altitude=0, cloud_cover=cloud_cover)
+        
+        # Enhanced cloud transmission model with altitude dependency
+        base_transmission = 1.0 - self.cloud_alpha * (cloud_cover ** 2)
+        diffuse_factor = 0.3 * cloud_cover * (1.0 - cos_zenith)  # More diffuse light at higher zenith angles
+        cloud_transmission = base_transmission + diffuse_factor
 
         # Calculate second-order derivatives for energy flux conservation
         y_grad2 = torch.autograd.grad(
@@ -97,11 +115,21 @@ class SolarPINN(nn.Module):
         source_term = y_grad[:, 2]  # ∂I/∂t (temporal variation as source)
         conservation_residual = flux_divergence + source_term
         
-        # Beer-Lambert law implementation
-        theoretical_irradiance = (self.solar_constant * 
-                                torch.exp(-optical_depth * air_mass) * 
-                                cos_theta * 
-                                cloud_transmission)
+        # Enhanced Beer-Lambert law with diffuse and reflected components
+        direct_irradiance = (self.solar_constant * 
+                           torch.exp(-optical_depth * air_mass) * 
+                           cos_theta * 
+                           cloud_transmission)
+        
+        # Diffuse irradiance (sky radiation)
+        diffuse_irradiance = self.solar_constant * 0.3 * (1.0 - cloud_transmission) * cos_zenith
+        
+        # Reflected irradiance (ground albedo)
+        ground_albedo = 0.2  # Average ground reflectance
+        reflected_irradiance = ground_albedo * direct_irradiance * (1.0 - cos_theta) * 0.5
+        
+        # Total theoretical irradiance
+        theoretical_irradiance = direct_irradiance + diffuse_irradiance + reflected_irradiance
         
         # Physics residuals
         spatial_residual = y_grad[:, 0]**2 + y_grad[:, 1]**2  # Spatial variation

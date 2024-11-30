@@ -68,11 +68,11 @@ class DataProcessor:
         raw_predictions = torch.clamp(predictions, 0, 1)
         
         if scale_irradiance:
-            # Calculate efficiency (15-25%)
-            efficiency = 0.15 + 0.10 * raw_predictions  # Maps [0,1] to [0.15,0.25]
+            # First calculate irradiance and constrain it to [100, 200] W/m²
+            irradiance = 100 + 100 * raw_predictions  # Maps [0,1] to [100,200]
             
-            # Calculate irradiance [0, 1367 W/m²]
-            irradiance = raw_predictions * self.irradiance_scale
+            # Then calculate efficiency (40-50%)
+            efficiency = 0.40 + 0.10 * raw_predictions  # Maps [0,1] to [0.40,0.50]
             
             # Apply efficiency to get final output
             return irradiance * efficiency

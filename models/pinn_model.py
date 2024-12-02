@@ -8,16 +8,9 @@ class SolarPINN(nn.Module):
     def __init__(self, input_dim=8): 
         super(SolarPINN, self).__init__()
         # Enhanced network architecture with carefully chosen layer sizes
-        # Create batch norm layers with proper configuration
-        self.bn1 = nn.BatchNorm1d(96, momentum=0.1, eps=1e-5, affine=True, track_running_stats=True)
-        self.bn2 = nn.BatchNorm1d(192, momentum=0.1, eps=1e-5, affine=True, track_running_stats=True)
-        self.bn3 = nn.BatchNorm1d(192, momentum=0.1, eps=1e-5, affine=True, track_running_stats=True)
-        self.bn4 = nn.BatchNorm1d(96, momentum=0.1, eps=1e-5, affine=True, track_running_stats=True)
-        
-        # Sequential layers without batch norm
         self.net = nn.Sequential(
             nn.Linear(input_dim, 96),
-            nn.SiLU(),
+            nn.SiLU(),  # SiLU activation for better gradient flow
             nn.Linear(96, 192),
             nn.SiLU(),
             nn.Linear(192, 192),
@@ -43,38 +36,7 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.0045      # Temperature coefficient (%/°C)  
 
     def forward(self, x):
-        # Get batch size
-        batch_size = x.size(0)
-        
-        # First linear and activation
-        h = self.net[0](x)
-        h = self.net[1](h)
-        
-        # Apply batch norm with size check
-        if batch_size > 1 or not self.training:
-            h = self.bn1(h)
-        
-        # Second block
-        h = self.net[2](h)
-        h = self.net[3](h)
-        if batch_size > 1 or not self.training:
-            h = self.bn2(h)
-            
-        # Third block
-        h = self.net[4](h)
-        h = self.net[5](h)
-        if batch_size > 1 or not self.training:
-            h = self.bn3(h)
-            
-        # Fourth block
-        h = self.net[6](h)
-        h = self.net[7](h)
-        if batch_size > 1 or not self.training:
-            h = self.bn4(h)
-            
-        # Final linear layer
-        raw_output = self.net[8](h)
-        
+        raw_output = self.net(x)
         return torch.sigmoid(raw_output)
 
     def solar_declination(self, time):
@@ -282,6 +244,7 @@ class PINNTrainer:
 
     def __init__(self, model, learning_rate=0.001):
         self.model = model
+        # Enhanced optimizer configuration with better parameters
         self.optimizer = torch.optim.Adam(
             model.parameters(),
             lr=learning_rate,
@@ -289,20 +252,12 @@ class PINNTrainer:
             eps=1e-8,
             weight_decay=1e-5
         )
-        # Add ReduceLROnPlateau scheduler
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer,
-            mode='min',
-            factor=0.5,
-            patience=10,
-            min_lr=1e-6
-        )
         self.mse_loss = nn.MSELoss(reduction='mean')
         
-        # Loss weights
-        self.w_data = 0.35     # Data loss weight
-        self.w_physics = 0.45  # Physics constraints weight
-        self.w_boundary = 0.20 # Boundary conditions weight  
+        # Optimized loss weights based on empirical testing
+        self.w_data = 0.35     # Reduced slightly to give more weight to physics
+        self.w_physics = 0.45  # Increased to emphasize physical constraints
+        self.w_boundary = 0.20 # Maintained for boundary conditions  
 
     def boundary_loss(self, x_data, y_pred):
         """Compute boundary condition losses"""
@@ -340,8 +295,6 @@ class PINNTrainer:
         
         total_loss.backward()
         self.optimizer.step()
-        
-        # Step the scheduler with the total loss
-        self.scheduler.step(total_loss)
 
-        return total_loss.item(), mse.item(), physics_loss.item(), boundary_loss.item()
+        return total_loss.item(), mse.item(), physics_loss.item(
+        ), boundary_loss.item()

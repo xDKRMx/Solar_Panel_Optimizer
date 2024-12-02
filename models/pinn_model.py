@@ -244,7 +244,6 @@ class PINNTrainer:
 
     def __init__(self, model, learning_rate=0.001):
         self.model = model
-        # Enhanced optimizer configuration with better parameters
         self.optimizer = torch.optim.Adam(
             model.parameters(),
             lr=learning_rate,
@@ -252,12 +251,20 @@ class PINNTrainer:
             eps=1e-8,
             weight_decay=1e-5
         )
+        # Add ReduceLROnPlateau scheduler
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode='min',
+            factor=0.5,
+            patience=10,
+            min_lr=1e-6
+        )
         self.mse_loss = nn.MSELoss(reduction='mean')
         
-        # Optimized loss weights based on empirical testing
-        self.w_data = 0.35     # Reduced slightly to give more weight to physics
-        self.w_physics = 0.45  # Increased to emphasize physical constraints
-        self.w_boundary = 0.20 # Maintained for boundary conditions  
+        # Loss weights
+        self.w_data = 0.35     # Data loss weight
+        self.w_physics = 0.45  # Physics constraints weight
+        self.w_boundary = 0.20 # Boundary conditions weight  
 
     def boundary_loss(self, x_data, y_pred):
         """Compute boundary condition losses"""
@@ -295,6 +302,8 @@ class PINNTrainer:
         
         total_loss.backward()
         self.optimizer.step()
+        
+        # Step the scheduler with the total loss
+        self.scheduler.step(total_loss)
 
-        return total_loss.item(), mse.item(), physics_loss.item(
-        ), boundary_loss.item()
+        return total_loss.item(), mse.item(), physics_loss.item(), boundary_loss.item()

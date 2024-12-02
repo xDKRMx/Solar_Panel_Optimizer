@@ -62,27 +62,94 @@ class SolarPINN(nn.Module):
                 with torch.no_grad():
                     param.clamp_(min_val, max_val)
 
+    def _validate_input(self, x):
+        """Validate input tensor and handle edge cases"""
+        if not isinstance(x, torch.Tensor):
+            raise ValueError("Input must be a PyTorch tensor")
+        
+        if x.dim() != 2 or x.size(1) != 8:
+            raise ValueError(f"Expected input shape (batch_size, 8), got {x.shape}")
+            
+        if torch.isnan(x).any():
+            raise ValueError("Input contains NaN values")
+            
+        if torch.isinf(x).any():
+            raise ValueError("Input contains infinite values")
+            
+        return x
+    
+    def _normalize_features(self, x):
+        """Normalize features individually with robust scaling"""
+        # Define feature ranges for proper scaling
+        feature_ranges = {
+            0: (-90, 90),    # latitude
+            1: (-180, 180),  # longitude
+            2: (0, 24),      # time
+            3: (0, 90),      # slope
+            4: (0, 360),     # aspect
+            5: (0, 1),       # atmospheric transmission
+            6: (0, 1),       # cloud cover
+            7: (0.4, 0.7)    # wavelength
+        }
+        
+        x_normalized = torch.zeros_like(x)
+        
+        for i in range(x.size(1)):
+            min_val, max_val = feature_ranges[i]
+            # Clip values to valid range
+            x_clipped = torch.clamp(x[:, i], min_val, max_val)
+            # Normalize to [-1, 1] range with epsilon for numerical stability
+            x_normalized[:, i] = (2 * (x_clipped - min_val) / (max_val - min_val + 1e-8)) - 1
+            
+        return x_normalized
+    
+    def _validate_output(self, output):
+        """Validate and process model output"""
+        if torch.isnan(output).any():
+            raise ValueError("Model produced NaN output")
+            
+        if torch.isinf(output).any():
+            raise ValueError("Model produced infinite output")
+            
+        # Clip output to physically meaningful range
+        output_clipped = torch.clamp(output, 0.0, 1.0)
+        
+        # Ensure output is in the expected efficiency range
+        efficiency_min, efficiency_max = 0.15, 0.25
+        output_scaled = efficiency_min + output_clipped * (efficiency_max - efficiency_min)
+        
+        return output_scaled
+    
     def forward(self, x):
-        # Input normalization
-        x_normalized = (x - x.mean(dim=0)) / (x.std(dim=0) + 1e-8)
-        
-        # Forward pass with skip connections
-        h1 = self.input_block(x_normalized)
-        h2 = self.hidden1(h1)
-        h3 = self.hidden2(h2)
-        h4 = self.hidden3(h3)
-        
-        # Concatenate input with final hidden layer for skip connection
-        combined = torch.cat([h4, x_normalized], dim=1)
-        raw_output = self.output(combined)
-        
-        # Apply sigmoid for output scaling
-        output = torch.sigmoid(raw_output)
-        
-        # Constrain physics parameters
-        self._constrain_parameters()
-        
-        return output
+        try:
+            # Validate input
+            x = self._validate_input(x)
+            
+            # Normalize features
+            x_normalized = self._normalize_features(x)
+            
+            # Forward pass with skip connections
+            h1 = self.input_block(x_normalized)
+            h2 = self.hidden1(h1)
+            h3 = self.hidden2(h2)
+            h4 = self.hidden3(h3)
+            
+            # Concatenate input with final hidden layer for skip connection
+            combined = torch.cat([h4, x_normalized], dim=1)
+            raw_output = self.output(combined)
+            
+            # Process and validate output
+            output = self._validate_output(torch.sigmoid(raw_output))
+            
+            # Constrain physics parameters
+            self._constrain_parameters()
+            
+            return output
+            
+        except Exception as e:
+            # Log error and re-raise with more context
+            print(f"Error in forward pass: {str(e)}")
+            raise RuntimeError(f"Forward pass failed: {str(e)}")
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""

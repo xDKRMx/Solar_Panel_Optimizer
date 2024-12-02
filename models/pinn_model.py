@@ -11,12 +11,16 @@ class SolarPINN(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(input_dim, 96),
             nn.SiLU(),  # SiLU activation for better gradient flow
+            nn.BatchNorm1d(96, momentum=0.1, eps=1e-5),
             nn.Linear(96, 192),
             nn.SiLU(),
+            nn.BatchNorm1d(192, momentum=0.1, eps=1e-5),
             nn.Linear(192, 192),
             nn.SiLU(),
+            nn.BatchNorm1d(192, momentum=0.1, eps=1e-5),
             nn.Linear(192, 96),
             nn.SiLU(),
+            nn.BatchNorm1d(96, momentum=0.1, eps=1e-5),
             nn.Linear(96, 1)
         )
         
@@ -36,7 +40,13 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.0045      # Temperature coefficient (%/°C)  
 
     def forward(self, x):
-        raw_output = self.net(x)
+        if self.training:
+            raw_output = self.net(x)
+        else:
+            self.eval()
+            with torch.no_grad():
+                raw_output = self.net(x)
+            self.train()
         return torch.sigmoid(raw_output)
 
     def solar_declination(self, time):

@@ -5,12 +5,34 @@ import torch.nn as nn
 
 class SolarPINN(nn.Module):
 
-    def __init__(self, input_dim=8, reg_scale=0.01):  # Added regularization scale
+    def __init__(self, input_dim=8, reg_scale=0.01, dropout_rate=0.2):  # Added dropout rate
         super(SolarPINN, self).__init__()
-        self.net = nn.Sequential(nn.Linear(input_dim, 64), nn.Tanh(),
-                                 nn.Linear(64, 128), nn.Tanh(),
-                                 nn.Linear(128, 64), nn.Tanh(),
-                                 nn.Linear(64, 1))
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 64),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(dropout_rate),
+            
+            nn.Linear(64, 128),
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(dropout_rate),
+            
+            nn.Linear(128, 256),  # Increased capacity
+            nn.BatchNorm1d(256),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(dropout_rate),
+            
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(dropout_rate),
+            
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.LeakyReLU(0.2),
+            nn.Linear(64, 1)
+        )
         self.solar_constant = 1365.0  # W/m² (adjusted to max range)
         self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
         self.beta = 0.1  # Default aerosol optical thickness

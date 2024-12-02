@@ -2,42 +2,87 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+class ConfigurableBlock(nn.Module):
+    def __init__(self, in_dim, out_dim, dropout_rate=0.2):
+        super().__init__()
+        self.linear = nn.Linear(in_dim, out_dim)
+        self.activation = nn.SiLU()
+        self.dropout = nn.Dropout(p=dropout_rate)
+        self.norm = nn.LayerNorm(out_dim)
+        
+    def forward(self, x):
+        return self.dropout(self.activation(self.norm(self.linear(x))))
 
 class SolarPINN(nn.Module):
-
-    def __init__(self, input_dim=8): 
+    def __init__(self, input_dim=8, complexity_factor=1.0):
         super(SolarPINN, self).__init__()
-        # Enhanced network architecture with carefully chosen layer sizes
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 96),
-            nn.SiLU(),  # SiLU activation for better gradient flow
-            nn.Linear(96, 192),
-            nn.SiLU(),
-            nn.Linear(192, 192),
-            nn.SiLU(),
-            nn.Linear(192, 96),
-            nn.SiLU(),
-            nn.Linear(96, 1)
-        )
+        # Scale layer sizes based on input complexity
+        base_width = int(96 * complexity_factor)
         
-        # Initialize weights using Xavier/Glorot initialization
-        for layer in self.net:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_normal_(layer.weight)
-                nn.init.zeros_(layer.bias)
+        # Define network layers with skip connections
+        self.input_block = ConfigurableBlock(input_dim, base_width)
+        self.hidden1 = ConfigurableBlock(base_width, base_width * 2)
+        self.hidden2 = ConfigurableBlock(base_width * 2, base_width * 2)
+        self.hidden3 = ConfigurableBlock(base_width * 2, base_width)
+        self.output = nn.Linear(base_width + input_dim, 1)  # Skip connection from input
         
-        # Optimized physics coefficients based on empirical studies
-        self.solar_constant = 1367.0  # Solar constant (W/m²)
-        self.ref_wavelength = 0.55    # Reference wavelength (μm) - visible light
-        self.beta = 0.125             # Atmospheric turbidity coefficient
-        self.alpha = 1.25             # Wavelength exponent
-        self.cloud_alpha = 0.82       # Cloud absorption coefficient
-        self.ref_temp = 25.0          # Reference temperature (°C)
-        self.temp_coeff = 0.0045      # Temperature coefficient (%/°C)  
+        # Initialize weights
+        self._init_weights()
+        
+        # Physics coefficients (now as trainable parameters)
+        self.register_parameter('solar_constant', nn.Parameter(torch.tensor(1367.0)))
+        self.register_parameter('ref_wavelength', nn.Parameter(torch.tensor(0.55)))
+        self.register_parameter('beta', nn.Parameter(torch.tensor(0.125)))
+        self.register_parameter('alpha', nn.Parameter(torch.tensor(1.25)))
+        self.register_parameter('cloud_alpha', nn.Parameter(torch.tensor(0.82)))
+        self.register_parameter('ref_temp', nn.Parameter(torch.tensor(25.0)))
+        self.register_parameter('temp_coeff', nn.Parameter(torch.tensor(0.0045)))
+        
+        # Parameter constraints
+        self.param_ranges = {
+            'solar_constant': (1360.0, 1380.0),
+            'ref_wavelength': (0.5, 0.6),
+            'beta': (0.1, 0.15),
+            'alpha': (1.0, 1.5),
+            'cloud_alpha': (0.7, 0.9),
+            'ref_temp': (20.0, 30.0),
+            'temp_coeff': (0.003, 0.006)
+        }
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight)
+                nn.init.zeros_(m.bias)
+
+    def _constrain_parameters(self):
+        for name, param in self.named_parameters():
+            if name in self.param_ranges:
+                min_val, max_val = self.param_ranges[name]
+                with torch.no_grad():
+                    param.clamp_(min_val, max_val)
 
     def forward(self, x):
-        raw_output = self.net(x)
-        return torch.sigmoid(raw_output)
+        # Input normalization
+        x_normalized = (x - x.mean(dim=0)) / (x.std(dim=0) + 1e-8)
+        
+        # Forward pass with skip connections
+        h1 = self.input_block(x_normalized)
+        h2 = self.hidden1(h1)
+        h3 = self.hidden2(h2)
+        h4 = self.hidden3(h3)
+        
+        # Concatenate input with final hidden layer for skip connection
+        combined = torch.cat([h4, x_normalized], dim=1)
+        raw_output = self.output(combined)
+        
+        # Apply sigmoid for output scaling
+        output = torch.sigmoid(raw_output)
+        
+        # Constrain physics parameters
+        self._constrain_parameters()
+        
+        return output
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -241,10 +286,13 @@ class SolarPINN(nn.Module):
 
 
 class PINNTrainer:
-
-    def __init__(self, model, learning_rate=0.001):
+    def __init__(self, model, learning_rate=0.001, patience=10):
         self.model = model
-        # Enhanced optimizer configuration with better parameters
+        self.patience = patience
+        self.best_loss = float('inf')
+        self.patience_counter = 0
+        
+        # Setup optimizer with cosine annealing scheduler
         self.optimizer = torch.optim.Adam(
             model.parameters(),
             lr=learning_rate,
@@ -252,12 +300,20 @@ class PINNTrainer:
             eps=1e-8,
             weight_decay=1e-5
         )
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=100, eta_min=1e-6
+        )
+        
         self.mse_loss = nn.MSELoss(reduction='mean')
         
-        # Optimized loss weights based on empirical testing
-        self.w_data = 0.35     # Reduced slightly to give more weight to physics
-        self.w_physics = 0.45  # Increased to emphasize physical constraints
-        self.w_boundary = 0.20 # Maintained for boundary conditions  
+        # Initialize adaptive loss weights as parameters
+        self.w_data = nn.Parameter(torch.tensor(0.35))
+        self.w_physics = nn.Parameter(torch.tensor(0.45))
+        self.w_boundary = nn.Parameter(torch.tensor(0.20))
+        
+        # Gradient clipping parameters
+        self.grad_clip_threshold = 1.0
+        self.adaptive_clip_factor = 1.0  
 
     def boundary_loss(self, x_data, y_pred):
         """Compute boundary condition losses"""

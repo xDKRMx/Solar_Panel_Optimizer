@@ -98,7 +98,7 @@ class DataProcessor:
                 max=base_efficiency + efficiency_range
             )
 
-    def generate_training_data(self, n_samples=1000, noise_scale=0.05):
+    def generate_training_data(self, n_samples=1000, noise_scale=0.1):  # Increased noise scale
         """Generate synthetic training data with enhanced edge cases, extreme conditions, and data augmentation"""
         # Generate more diverse cases
         n_night = int(n_samples * 0.25)  # 25% nighttime cases

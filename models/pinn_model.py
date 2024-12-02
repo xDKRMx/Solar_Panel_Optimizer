@@ -5,8 +5,13 @@ import torch.nn as nn
 
 class SolarPINN(nn.Module):
 
-    def __init__(self, input_dim=8, reg_scale=0.1, dropout_rate=0.4):  # Increased regularization and dropout
+    def __init__(self, input_dim=8, reg_scale=0.5, dropout_rate=0.4, l1_weight=0.3):  # Updated regularization
         super(SolarPINN, self).__init__()
+        self.reg_scale = reg_scale  # L2 regularization
+        self.l1_weight = l1_weight  # L1 regularization
+        self.early_stopping_patience = 10
+        self.best_loss = float('inf')
+        self.patience_counter = 0
         self.net = nn.Sequential(
             nn.Linear(input_dim, 64),
             nn.LayerNorm(64),
@@ -213,7 +218,7 @@ class SolarPINN(nn.Module):
         )
 
         # Dynamic weighting
-        spatial_weight = 0.2 * torch.exp(-conservation_residual.abs().mean())
+        spatial_weight = 0.4 * torch.exp(-conservation_residual.abs().mean())  # Increased spatial weight
         temporal_weight = 0.2 * torch.exp(-temporal_residual.abs().mean())
         boundary_weight = 0.15
         conservation_weight = 0.15
@@ -239,26 +244,29 @@ class SolarPINN(nn.Module):
             y_pred - torch.clamp(y_pred, min=0.15, max=0.25)
         )) * 100.0
 
-        # Add L2 regularization for network parameters
+        # Add L1 and L2 regularization for network parameters
+        l1_reg = 0.0
         l2_reg = 0.0
         for param in self.parameters():
+            l1_reg += torch.norm(param, p=1)
             l2_reg += torch.norm(param, p=2)
         
-        # Update total_residual calculation with regularization
+        # Update total_residual calculation with both L1 and L2 regularization
         total_residual = (
             spatial_weight * spatial_residual +
             temporal_weight * temporal_residual +
-            5.0 * physics_residual +
+            2.0 * physics_residual +  # Reduced physics residual weight
             boundary_weight * (torch.relu(-y_pred) + torch.relu(y_pred - self.solar_constant)) +
             conservation_weight * conservation_residual**2 +
             10.0 * nighttime_penalty +
             efficiency_penalty +  # Increased penalty weight
             clipping_penalty +  # Add hard clipping penalty
-            self.reg_scale * l2_reg  # Add L2 regularization term
+            self.reg_scale * l2_reg +  # L2 regularization
+            self.l1_weight * l1_reg    # Added L1 regularization
         )
 
         # Apply gradient clipping for stability
-        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)  # Lower gradient clipping threshold
+        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.1)  # Updated gradient clipping threshold
 
         return torch.mean(total_residual)
 

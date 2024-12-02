@@ -9,27 +9,27 @@ class SolarPINN(nn.Module):
         super(SolarPINN, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 64),
-            nn.BatchNorm1d(64),
+            nn.LayerNorm(64),
             nn.LeakyReLU(0.2),
             nn.Dropout(dropout_rate),
             
             nn.Linear(64, 128),
-            nn.BatchNorm1d(128),
+            nn.LayerNorm(128),
             nn.LeakyReLU(0.2),
             nn.Dropout(dropout_rate),
             
             nn.Linear(128, 256),  # Increased capacity
-            nn.BatchNorm1d(256),
+            nn.LayerNorm(256),
             nn.LeakyReLU(0.2),
             nn.Dropout(dropout_rate),
             
             nn.Linear(256, 128),
-            nn.BatchNorm1d(128),
+            nn.LayerNorm(128),
             nn.LeakyReLU(0.2),
             nn.Dropout(dropout_rate),
             
             nn.Linear(128, 64),
-            nn.BatchNorm1d(64),
+            nn.LayerNorm(64),
             nn.LeakyReLU(0.2),
             nn.Linear(64, 1)
         )

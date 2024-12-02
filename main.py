@@ -165,11 +165,9 @@ def main():
     )
     
     # Model prediction
-    model.eval()  # Set model to evaluation mode
     with torch.no_grad():
         prediction = model(input_data)
         prediction = processor.denormalize_predictions(prediction)
-    model.train()  # Reset to training mode for future use
     
     # Calculate physics-based irradiance
     physics_irradiance = calculator.calculate_irradiance(

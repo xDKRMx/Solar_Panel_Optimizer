@@ -2,7 +2,7 @@ import numpy as np
 
 class SolarIrradianceCalculator:
     def __init__(self):
-        self.solar_constant = 1365  # W/m² (adjusted to max range)
+        self.solar_constant = 1367  # W/m²
         self.beta = 0.1  # Default aerosol optical thickness
         self.alpha = 1.3  # Default Ångström exponent
         self.cloud_alpha = 0.75  # Empirical cloud transmission parameter
@@ -41,37 +41,37 @@ class SolarIrradianceCalculator:
 
     def calculate_irradiance(self, latitude, longitude, day_number, hour, slope, aspect, atm_transmission, cloud_cover=0.0, wavelength=0.5):
         """Calculate solar irradiance with advanced atmospheric effects"""
-        # Calculate angles
+        
         declination = self.solar_declination(day_number)
         hour_ang = self.hour_angle(hour, longitude)
         cos_inc = self.cos_incidence_angle(latitude, declination, hour_ang, slope, aspect)
         
-        # Calculate zenith angle and air mass
+        
         lat_rad = np.radians(latitude)
         decl_rad = np.radians(declination)
         hour_rad = np.radians(hour_ang)
         cos_zenith = (np.sin(lat_rad) * np.sin(decl_rad) +
                      np.cos(lat_rad) * np.cos(decl_rad) * np.cos(hour_rad))
         
-        # Check if it's nighttime (sun below horizon)
+        
         if cos_zenith <= 0:
             return 0.0
             
-        # Prevent division by zero in air mass calculation
+        
         cos_zenith = np.clip(cos_zenith, 0.001, 1.0)
         zenith_angle = np.arccos(cos_zenith)
         
-        # Calculate atmospheric effects
+       
         air_mass = self.calculate_air_mass(zenith_angle)
         optical_depth = self.calculate_optical_depth(wavelength)
         
-        # Cloud cover effect
+       
         cloud_transmission = 1.0 - self.cloud_alpha * (cloud_cover ** 3)
         
-        # Direct normal irradiance with Beer-Lambert law
+        
         dni = self.solar_constant * np.exp(-optical_depth * air_mass) * atm_transmission * cloud_transmission
         
-        # Surface irradiance
+       
         irradiance = dni * np.maximum(0, cos_inc)
         
         return irradiance

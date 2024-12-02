@@ -5,19 +5,20 @@ import torch.nn as nn
 
 class SolarPINN(nn.Module):
 
-    def __init__(self, input_dim=8):  # Updated for cloud_cover and wavelength
+    def __init__(self, input_dim=8, reg_scale=0.01):  # Added regularization scale
         super(SolarPINN, self).__init__()
         self.net = nn.Sequential(nn.Linear(input_dim, 64), nn.Tanh(),
                                  nn.Linear(64, 128), nn.Tanh(),
                                  nn.Linear(128, 64), nn.Tanh(),
                                  nn.Linear(64, 1))
-        self.solar_constant = 1367.0  # W/m²
+        self.solar_constant = 1365.0  # W/m² (adjusted to max range)
         self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
         self.beta = 0.1  # Default aerosol optical thickness
         self.alpha = 1.3  # Default Ångström exponent
         self.cloud_alpha = 0.85  # Empirically derived cloud transmission parameter
         self.ref_temp = 25.0  # Reference temperature (°C)
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
+        self.reg_scale = reg_scale  # L2 regularization scale
 
     def forward(self, x):
         raw_output = self.net(x)
@@ -216,7 +217,12 @@ class SolarPINN(nn.Module):
             y_pred - torch.clamp(y_pred, min=0.15, max=0.25)
         )) * 100.0
 
-        # Update total_residual calculation
+        # Add L2 regularization for network parameters
+        l2_reg = 0.0
+        for param in self.parameters():
+            l2_reg += torch.norm(param, p=2)
+        
+        # Update total_residual calculation with regularization
         total_residual = (
             spatial_weight * spatial_residual +
             temporal_weight * temporal_residual +
@@ -225,7 +231,8 @@ class SolarPINN(nn.Module):
             conservation_weight * conservation_residual**2 +
             10.0 * nighttime_penalty +
             efficiency_penalty +  # Increased penalty weight
-            clipping_penalty  # Add hard clipping penalty
+            clipping_penalty +  # Add hard clipping penalty
+            self.reg_scale * l2_reg  # Add L2 regularization term
         )
 
         # Apply gradient clipping for stability

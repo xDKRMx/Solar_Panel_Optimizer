@@ -2,7 +2,7 @@ import numpy as np
 
 class SolarIrradianceCalculator:
     def __init__(self):
-        self.solar_constant = 1367  # W/m²
+        self.solar_constant = 1365  # W/m² (adjusted to max range)
         self.beta = 0.1  # Default aerosol optical thickness
         self.alpha = 1.3  # Default Ångström exponent
         self.cloud_alpha = 0.75  # Empirical cloud transmission parameter

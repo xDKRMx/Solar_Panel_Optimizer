@@ -8,7 +8,7 @@ class DataProcessor:
         # Physical constants for non-dimensionalization
         self.earth_radius = 6371.0  # km
         self.day_period = 24.0  # hours
-        self.solar_constant = 1367.0  # W/m²
+        self.solar_constant = 1365.0  # W/m² (adjusted to max range)
 
         # Initialize scalers
         self.length_scale = self.earth_radius

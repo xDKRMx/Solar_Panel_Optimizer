@@ -57,34 +57,49 @@ class DataProcessor:
         return torch.FloatTensor(data)
 
     def normalize_data(self, data):
-        """Normalize input data to [-1, 1] range"""
+        """Normalize input data with robust scaling for extreme values"""
         # Define normalization ranges for each variable
         ranges = np.array([
-            [-90, 90],  # latitude
+            [-90, 90],    # latitude
             [-180, 180],  # longitude
-            [0, 1],  # normalized time
-            [0, 90],  # slope
-            [0, 360],  # aspect
-            [0, 1]  # atmospheric transmission
+            [0, 1],       # normalized time
+            [0, 90],      # slope
+            [0, 360],     # aspect
+            [0, 1],       # atmospheric transmission
+            [0, 1],       # cloud cover
+            [0.3, 1.0]    # wavelength
         ])
 
-        # Normalize to [-1, 1]
-        normalized = 2 * (data - ranges[:, 0]) / (ranges[:, 1] -
-                                                  ranges[:, 0]) - 1
+        # Apply robust scaling with sigmoid-based normalization for extreme values
+        normalized = np.zeros_like(data, dtype=np.float32)
+        for i in range(data.shape[1]):
+            x = (data[:, i] - ranges[i, 0]) / (ranges[i, 1] - ranges[i, 0])
+            # Apply sigmoid scaling for smoother handling of extreme values
+            x = 1 / (1 + np.exp(-4 * (x - 0.5)))  # Sigmoid scaling
+            normalized[:, i] = 2 * x - 1  # Scale to [-1, 1]
+        
         return normalized
 
     def denormalize_predictions(self, predictions, scale_irradiance=True):
-        """Convert predictions to physical units"""
+        """Convert predictions to physical units with robust handling of extreme values"""
         if scale_irradiance:
-            # For irradiance predictions
-            return torch.clamp(predictions * self.irradiance_scale, min=0)
+            # Apply smooth scaling for irradiance predictions
+            normalized = torch.sigmoid(predictions)  # Scale to [0, 1]
+            scaled = normalized * self.irradiance_scale  # Scale to [0, 1365]
+            return torch.clamp(scaled, min=0, max=self.irradiance_scale)
         else:
-            # For efficiency, apply hard clipping after sigmoid
+            # For efficiency, apply smooth sigmoid scaling
             raw_efficiency = torch.sigmoid(predictions)
-            return torch.clamp(0.15 + (0.10 * raw_efficiency), min=0.15, max=0.25)
+            base_efficiency = 0.15
+            efficiency_range = 0.10
+            return torch.clamp(
+                base_efficiency + (efficiency_range * raw_efficiency),
+                min=base_efficiency,
+                max=base_efficiency + efficiency_range
+            )
 
-    def generate_training_data(self, n_samples=1000):
-        """Generate synthetic training data with enhanced edge cases and extreme conditions"""
+    def generate_training_data(self, n_samples=1000, noise_scale=0.05):
+        """Generate synthetic training data with enhanced edge cases, extreme conditions, and data augmentation"""
         # Generate more diverse cases
         n_night = int(n_samples * 0.25)  # 25% nighttime cases
         n_transition = int(n_samples * 0.25)  # 25% sunrise/sunset
@@ -132,11 +147,30 @@ class DataProcessor:
             np.random.uniform(45, 90, n_samples // 4)     # High angles
         ])
 
-        # Enhanced aspect variations
-        aspect = np.concatenate([
+        # Enhanced aspect variations with random rotations
+        base_aspect = np.concatenate([
             np.random.uniform(135, 225, n_samples // 2),  # Southern aspects
             np.random.uniform(0, 360, n_samples // 2)     # All directions
         ])
+        # Apply random rotations
+        rotation_noise = np.random.uniform(-30, 30, n_samples)
+        aspect = (base_aspect + rotation_noise) % 360
+        
+        # Add random noise to all parameters for data augmentation
+        lat = lat + np.random.normal(0, noise_scale * 10, n_samples)
+        lon = lon + np.random.normal(0, noise_scale * 20, n_samples)
+        slope = slope + np.random.normal(0, noise_scale * 5, n_samples)
+        atm = atm + np.random.normal(0, noise_scale, n_samples)
+        cloud_cover = cloud_cover + np.random.normal(0, noise_scale, n_samples)
+        wavelength = wavelength + np.random.normal(0, noise_scale * 0.05, n_samples)
+        
+        # Ensure values stay within valid ranges
+        lat = np.clip(lat, -90, 90)
+        lon = np.clip(lon, -180, 180)
+        slope = np.clip(slope, 0, 90)
+        atm = np.clip(atm, 0, 1)
+        cloud_cover = np.clip(cloud_cover, 0, 1)
+        wavelength = np.clip(wavelength, 0.3, 1.0)
 
         # Atmospheric conditions with more extreme cases
         atm = np.concatenate([

@@ -5,7 +5,7 @@ import torch.nn as nn
 
 class SolarPINN(nn.Module):
 
-    def __init__(self, input_dim=8, reg_scale=0.01, dropout_rate=0.2):  # Added dropout rate
+    def __init__(self, input_dim=8, reg_scale=0.1, dropout_rate=0.4):  # Increased regularization and dropout
         super(SolarPINN, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 64),
@@ -258,7 +258,7 @@ class SolarPINN(nn.Module):
         )
 
         # Apply gradient clipping for stability
-        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)  # Lower gradient clipping threshold
 
         return torch.mean(total_residual)
 

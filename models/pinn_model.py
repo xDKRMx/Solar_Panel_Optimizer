@@ -150,54 +150,58 @@ class SolarPINN(nn.Module):
         # Get angles using normalized inputs
         cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
 
-        # Calculate normalized air mass with normalized constants
+        # Calculate normalized zenith angle
         zenith_angle = torch.acos(cos_zenith)
-        zenith_deg = torch.rad2deg(zenith_angle)
+        zenith_norm = torch.rad2deg(zenith_angle) / 90.0  # Normalize to [0, 1]
         
-        # Normalize air mass formula constants
+        # Calculate air mass with normalized zenith angle
         AM_CONST1 = 0.50572 / self.AIR_MASS_CHAR
         AM_CONST2 = 96.07995 / 90.0  # Normalize to angle range
         AM_CONST3 = -1.6364  # Dimensionless exponent
         
         air_mass = 1.0 / (cos_zenith + AM_CONST1 * 
-                         (AM_CONST2 * (90.0 - zenith_deg)).pow(AM_CONST3))
+                         (AM_CONST2 * (1.0 - zenith_norm) * 90.0).pow(AM_CONST3))
         normalized_air_mass = air_mass / self.AIR_MASS_CHAR
 
         # Simple day/night validation with normalized penalty
         nighttime_condition = (cos_zenith <= 0.001)
         y_pred_norm = y_pred / self.IRRADIANCE_CHAR  # Normalize predictions
-        night_penalty_factor = self.ZENITH_PENALTY_CHAR / self.EFFICIENCY_CHAR
+        night_penalty_factor = 1.0  # Normalized penalty factor
         nighttime_penalty = torch.where(
             nighttime_condition,
             torch.abs(y_pred_norm) * night_penalty_factor,
             torch.zeros_like(y_pred_norm)
         )
 
-        # Normalize atmospheric parameters
+        # Calculate theoretical irradiance in physical units first
         normalized_beta = self.beta / self.BETA_CHAR
         normalized_cloud = cloud_cover / self.CLOUD_CHAR
         
         # Calculate transmission with normalized values
         transmission = torch.exp(-normalized_beta * normalized_air_mass)
-        theoretical_irradiance = (self.solar_constant / self.IRRADIANCE_CHAR) * transmission * cos_theta
         
-        # Normalize cloud effect constants
-        CLOUD_COEF = 0.75 / self.CLOUD_CHAR
+        # Calculate in physical units first
+        theoretical_irradiance = self.solar_constant * transmission * cos_theta
+        
+        # Apply cloud effect
+        CLOUD_COEF = 0.75  # Physical coefficient
         CLOUD_EXP = 3.4  # Dimensionless exponent
         theoretical_irradiance = theoretical_irradiance * (1 - CLOUD_COEF * normalized_cloud ** CLOUD_EXP)
         
+        # Then normalize
+        theoretical_irradiance = theoretical_irradiance / self.IRRADIANCE_CHAR
+        
         # Physics residual based on normalized values
-        physics_penalty_factor = 50.0 / self.ZENITH_PENALTY_CHAR
+        physics_penalty_factor = 0.4  # Normalized penalty factor
         physics_residual = torch.where(
             theoretical_irradiance < 0.001,
             torch.abs(y_pred_norm) * physics_penalty_factor,
             (y_pred_norm - theoretical_irradiance)**2
         )
 
-        # Temperature effects with normalized coefficients
+        # Temperature effects with proper normalization
         normalized_temp = (20.0 - self.ref_temp) / self.TEMP_CHAR
-        temp_coef_norm = self.TEMP_COEF_CHAR / self.EFFICIENCY_CHAR
-        temp_effect = 1.0 - temp_coef_norm * (normalized_temp * self.TEMP_CHAR)
+        temp_effect = 1.0 - self.TEMP_COEF_CHAR * normalized_temp  # Keep in normalized form
         
         # Efficiency constraints with normalized bounds
         efficiency_norm = y_pred_norm / theoretical_irradiance.clamp(min=0.001)
@@ -206,13 +210,13 @@ class SolarPINN(nn.Module):
         efficiency_penalty = (
             torch.relu(EFF_MIN - efficiency_norm) + 
             torch.relu(efficiency_norm - EFF_MAX)
-        ) * (self.ZENITH_PENALTY_CHAR / self.EFFICIENCY_CHAR)
+        )
 
-        # Combine losses with normalized weights
+        # Combine losses with normalized weights that sum to 1.0
         total_residual = (
-            5.0 * physics_residual +
-            10.0 * nighttime_penalty +
-            2.0 * efficiency_penalty
+            0.4 * physics_residual +
+            0.4 * nighttime_penalty +
+            0.2 * efficiency_penalty
         )
 
         return torch.mean(total_residual)
@@ -227,7 +231,7 @@ class PINNTrainer:
         )
         self.mse_loss = nn.MSELoss()
         
-        # Loss weights
+        # Loss weights that sum to 1.0
         self.w_data = 0.3
         self.w_physics = 0.7
 

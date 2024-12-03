@@ -72,8 +72,8 @@ class SolarPINN(nn.Module):
         # Pass through network
         raw_output = self.net(x_norm)
         
-        # Normalize to [0,1] range using sigmoid
-        y_norm = torch.sigmoid(raw_output)
+        # Clip to ensure physical bounds (0 to 1 in normalized space)
+        y_norm = torch.clamp(raw_output, min=0.0, max=1.0)
         
         # Denormalize to physical units
         return self.denormalize_outputs(y_norm)

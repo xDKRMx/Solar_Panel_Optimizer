@@ -12,6 +12,12 @@ class SolarPINN(nn.Module):
     AIR_MASS_CHAR = 1.5  # Standard air mass reference (AM1.5)
     BETA_CHAR = 0.5  # Maximum expected turbidity
     CLOUD_CHAR = 1.0  # Maximum cloud cover
+    DAY_CHAR = 365.0  # days in year
+    HOUR_ANGLE_CHAR = 15.0  # degrees per hour
+    EFFICIENCY_CHAR = 1.0  # maximum efficiency
+    DECLINATION_CHAR = 23.45  # maximum declination angle
+    ZENITH_PENALTY_CHAR = 100.0  # maximum penalty value
+    TEMP_COEF_CHAR = 0.005  # temperature coefficient
     
     def __init__(self, input_dim=8): 
         super(SolarPINN, self).__init__()
@@ -74,17 +80,34 @@ class SolarPINN(nn.Module):
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
-        # Convert normalized time to day number
+        # Convert normalized time to normalized day number
         time_phys = time * self.TIME_CHAR
-        day_number = (time_phys / 24.0 * 365).clamp(0, 365)
-        return torch.deg2rad(23.45 * torch.sin(2 * np.pi * (284 + day_number) / 365))
+        day_number = (time_phys / 24.0 * self.DAY_CHAR).clamp(0, self.DAY_CHAR)
+        
+        # Normalize constants in calculation
+        norm_declination = self.DECLINATION_CHAR / self.ANGLE_CHAR
+        norm_day_offset = 284.0 / self.DAY_CHAR
+        
+        return torch.deg2rad(
+            self.DECLINATION_CHAR * torch.sin(
+                2 * np.pi * (norm_day_offset + day_number / self.DAY_CHAR)
+            )
+        )
 
     def hour_angle(self, time, lon):
         """Calculate hour angle (ω)"""
-        # Convert normalized time to hours
+        # Convert normalized time to normalized hours
         time_phys = time * self.TIME_CHAR
-        hour = (time_phys % 24).clamp(0, 24)
-        return torch.deg2rad(15 * (hour - 12) + lon * self.ANGLE_CHAR - 180)
+        hour = (time_phys % self.TIME_CHAR).clamp(0, self.TIME_CHAR)
+        
+        # Normalize hour angle calculation
+        norm_hour_rate = self.HOUR_ANGLE_CHAR / self.ANGLE_CHAR
+        norm_time_offset = 12.0 / self.TIME_CHAR
+        
+        return torch.deg2rad(
+            self.HOUR_ANGLE_CHAR * (hour / self.TIME_CHAR - norm_time_offset) +
+            lon * self.ANGLE_CHAR - 180
+        )
 
     def cos_incidence_angle(self, lat, lon, time, slope, aspect):
         """Calculate cosine of incidence angle (θ) and zenith angle"""
@@ -114,7 +137,8 @@ class SolarPINN(nn.Module):
             torch.sin(lat_rad) * torch.cos(declination) * torch.cos(hour_angle)
             * torch.sin(slope_rad) * torch.cos(aspect_rad) +
             torch.cos(declination) * torch.sin(hour_angle) *
-            torch.sin(slope_rad) * torch.sin(aspect_rad))
+            torch.sin(slope_rad) * torch.sin(aspect_rad)
+        )
 
         return torch.clamp(cos_theta, min=0.0), torch.clamp(cos_zenith, min=0.0001)
 
@@ -126,18 +150,26 @@ class SolarPINN(nn.Module):
         # Get angles using normalized inputs
         cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
 
-        # Calculate normalized air mass
+        # Calculate normalized air mass with normalized constants
         zenith_angle = torch.acos(cos_zenith)
         zenith_deg = torch.rad2deg(zenith_angle)
-        air_mass = 1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364))
+        
+        # Normalize air mass formula constants
+        AM_CONST1 = 0.50572 / self.AIR_MASS_CHAR
+        AM_CONST2 = 96.07995 / 90.0  # Normalize to angle range
+        AM_CONST3 = -1.6364  # Dimensionless exponent
+        
+        air_mass = 1.0 / (cos_zenith + AM_CONST1 * 
+                         (AM_CONST2 * (90.0 - zenith_deg)).pow(AM_CONST3))
         normalized_air_mass = air_mass / self.AIR_MASS_CHAR
 
-        # Simple day/night validation
+        # Simple day/night validation with normalized penalty
         nighttime_condition = (cos_zenith <= 0.001)
         y_pred_norm = y_pred / self.IRRADIANCE_CHAR  # Normalize predictions
+        night_penalty_factor = self.ZENITH_PENALTY_CHAR / self.EFFICIENCY_CHAR
         nighttime_penalty = torch.where(
             nighttime_condition,
-            torch.abs(y_pred_norm) * 100.0,
+            torch.abs(y_pred_norm) * night_penalty_factor,
             torch.zeros_like(y_pred_norm)
         )
 
@@ -148,26 +180,35 @@ class SolarPINN(nn.Module):
         # Calculate transmission with normalized values
         transmission = torch.exp(-normalized_beta * normalized_air_mass)
         theoretical_irradiance = (self.solar_constant / self.IRRADIANCE_CHAR) * transmission * cos_theta
-        theoretical_irradiance = theoretical_irradiance * (1 - 0.75 * normalized_cloud ** 3.4)  # Add cloud effect
+        
+        # Normalize cloud effect constants
+        CLOUD_COEF = 0.75 / self.CLOUD_CHAR
+        CLOUD_EXP = 3.4  # Dimensionless exponent
+        theoretical_irradiance = theoretical_irradiance * (1 - CLOUD_COEF * normalized_cloud ** CLOUD_EXP)
         
         # Physics residual based on normalized values
+        physics_penalty_factor = 50.0 / self.ZENITH_PENALTY_CHAR
         physics_residual = torch.where(
             theoretical_irradiance < 0.001,
-            torch.abs(y_pred_norm) * 50.0,
+            torch.abs(y_pred_norm) * physics_penalty_factor,
             (y_pred_norm - theoretical_irradiance)**2
         )
 
-        # Temperature effects (if temperature data is available)
-        normalized_temp = (20.0 - self.ref_temp) / self.TEMP_CHAR  # Using default 20°C if not provided
-        temp_effect = 1.0 - 0.005 * (normalized_temp * self.TEMP_CHAR)  # Temperature coefficient
+        # Temperature effects with normalized coefficients
+        normalized_temp = (20.0 - self.ref_temp) / self.TEMP_CHAR
+        temp_coef_norm = self.TEMP_COEF_CHAR / self.EFFICIENCY_CHAR
+        temp_effect = 1.0 - temp_coef_norm * (normalized_temp * self.TEMP_CHAR)
         
-        # Efficiency constraints (15-25% range)
+        # Efficiency constraints with normalized bounds
         efficiency_norm = y_pred_norm / theoretical_irradiance.clamp(min=0.001)
+        EFF_MIN = 0.15 / self.EFFICIENCY_CHAR
+        EFF_MAX = 0.25 / self.EFFICIENCY_CHAR
         efficiency_penalty = (
-            torch.relu(0.15 - efficiency_norm) + 
-            torch.relu(efficiency_norm - 0.25)
-        ) * 100.0
+            torch.relu(EFF_MIN - efficiency_norm) + 
+            torch.relu(efficiency_norm - EFF_MAX)
+        ) * (self.ZENITH_PENALTY_CHAR / self.EFFICIENCY_CHAR)
 
+        # Combine losses with normalized weights
         total_residual = (
             5.0 * physics_residual +
             10.0 * nighttime_penalty +

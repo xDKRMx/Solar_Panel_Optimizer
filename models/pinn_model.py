@@ -3,9 +3,9 @@ import torch
 import torch.nn as nn
 
 class SolarPINN(nn.Module):
-    def __init__(self, input_dim=8): 
+    def __init__(self, input_dim=11):  # Updated input dimension for new parameters
         super(SolarPINN, self).__init__()
-        # Simplified network architecture with 3 layers
+        # Network architecture
         self.net = nn.Sequential(
             nn.Linear(input_dim, 64),
             nn.Tanh(),
@@ -14,16 +14,21 @@ class SolarPINN(nn.Module):
             nn.Linear(32, 1)
         )
         
-        # Initialize weights using Xavier initialization
+        # Initialize weights
         for layer in self.net:
             if isinstance(layer, nn.Linear):
                 nn.init.xavier_normal_(layer.weight)
                 nn.init.zeros_(layer.bias)
         
-        # Essential physics coefficients
+        # Physics coefficients
         self.solar_constant = 1367.0  # Solar constant (W/m²)
-        self.beta = 0.125      # Atmospheric turbidity coefficient
-        self.ref_temp = 25.0   # Reference temperature (°C)
+        self.ground_albedo = 0.2      # Ground albedo coefficient
+        self.ref_temp = 25.0          # Reference temperature (°C)
+        self.temp_coeff = -0.004      # Temperature coefficient (%/°C)
+        
+        # Spectral response parameters
+        self.wavelength_peak = 550    # Peak response wavelength (nm)
+        self.spectral_width = 100     # Response width (nm)
 
     def forward(self, x):
         raw_output = self.net(x)
@@ -65,47 +70,105 @@ class SolarPINN(nn.Module):
 
         return torch.clamp(cos_theta, min=0.0), torch.clamp(cos_zenith, min=0.0001)
 
+    def calculate_linke_turbidity(self, atm, cloud_cover):
+        """Calculate Linke turbidity factor"""
+        base_turbidity = 2.0 + 0.5 * atm
+        cloud_effect = 0.5 + 2.0 * cloud_cover
+        return base_turbidity * cloud_effect
+
+    def calculate_air_mass(self, cos_zenith):
+        """Calculate refined air mass using Kasten-Young formula"""
+        zenith_angle = torch.acos(cos_zenith)
+        zenith_deg = torch.rad2deg(zenith_angle)
+        return torch.where(
+            cos_zenith > 0.001,
+            1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364)),
+            torch.tensor(float('inf'))
+        )
+
+    def hay_davies_diffuse(self, dni, cos_theta, cos_zenith, cloud_cover):
+        """Calculate diffuse radiation using Hay-Davies model"""
+        # Anisotropy index
+        ai = torch.clamp(dni / self.solar_constant, min=0.0, max=1.0)
+        
+        # Circumsolar component
+        circumsolar = ai * (cos_theta / cos_zenith)
+        
+        # Isotropic component
+        isotropic = (1.0 - ai) * (1.0 + torch.cos(torch.deg2rad(slope))) / 2.0
+        
+        # Total diffuse
+        diffuse_total = dni * (circumsolar + isotropic) * (1.0 - cloud_cover)
+        return torch.clamp(diffuse_total, min=0.0)
+
+    def calculate_cell_temperature(self, ambient_temp, irradiance):
+        """Calculate cell temperature based on ambient temperature and irradiance"""
+        noct = 45.0  # Nominal Operating Cell Temperature (°C)
+        return ambient_temp + (noct - 20.0) * irradiance / 800.0
+
+    def spectral_response(self, wavelength):
+        """Calculate spectral response using Gaussian model"""
+        return torch.exp(-((wavelength - self.wavelength_peak)**2) / 
+                        (2 * self.spectral_width**2))
+
     def physics_loss(self, x, y_pred):
-        lat, lon, time, slope, aspect, atm, cloud_cover, wavelength = (x[:, i] for i in range(8))
+        lat, lon, time, slope, aspect, atm, cloud_cover, wavelength, ambient_temp, ground_type, humidity = (x[:, i] for i in range(11))
 
         cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
-
-        # Simple day/night validation
+        
+        # Atmospheric modeling
+        linke_turbidity = self.calculate_linke_turbidity(atm, cloud_cover)
+        air_mass = self.calculate_air_mass(cos_zenith)
+        
+        # Direct solar irradiance
+        transmission = torch.exp(-linke_turbidity * air_mass / 20.0)
+        dni = self.solar_constant * transmission * cos_zenith
+        
+        # Diffuse radiation
+        diffuse = self.hay_davies_diffuse(dni, cos_theta, cos_zenith, cloud_cover)
+        
+        # Ground-reflected radiation
+        ground_reflected = (dni + diffuse) * self.ground_albedo * (1.0 - torch.cos(torch.deg2rad(slope))) / 2.0
+        
+        # Total theoretical irradiance
+        theoretical_irradiance = dni * cos_theta + diffuse + ground_reflected
+        
+        # Temperature effects
+        cell_temp = self.calculate_cell_temperature(ambient_temp, theoretical_irradiance)
+        temp_factor = 1.0 + self.temp_coeff * (cell_temp - self.ref_temp)
+        
+        # Spectral effects
+        spectral_factor = self.spectral_response(wavelength)
+        
+        # Combined theoretical output
+        theoretical_output = theoretical_irradiance * temp_factor * spectral_factor
+        
+        # Physics residuals
         nighttime_condition = (cos_zenith <= 0.001)
         nighttime_penalty = torch.where(
             nighttime_condition,
             torch.abs(y_pred) * 100.0,
             torch.zeros_like(y_pred)
         )
-
-        # Simple atmospheric transmission
-        zenith_angle = torch.acos(cos_zenith)
-        zenith_deg = torch.rad2deg(zenith_angle)
-        air_mass = 1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364))
         
-        # Direct solar irradiance only
-        transmission = torch.exp(-self.beta * air_mass)
-        theoretical_irradiance = self.solar_constant * transmission * cos_theta
-        
-        # Physics residual based on direct irradiance only
         physics_residual = torch.where(
-            theoretical_irradiance < 1.0,
+            theoretical_output < 1.0,
             torch.abs(y_pred) * 50.0,
-            (y_pred - theoretical_irradiance)**2
+            (y_pred - theoretical_output/self.solar_constant)**2
         )
-
-        # Efficiency constraints (15-25% range)
+        
+        # Efficiency constraints (15-25% range with temperature adjustment)
         efficiency_penalty = (
-            torch.relu(0.15 - y_pred) + 
-            torch.relu(y_pred - 0.25)
+            torch.relu(0.15 * temp_factor - y_pred) + 
+            torch.relu(y_pred - 0.25 * temp_factor)
         ) * 100.0
-
+        
         total_residual = (
             5.0 * physics_residual +
             10.0 * nighttime_penalty +
-            efficiency_penalty
+            2.0 * efficiency_penalty
         )
-
+        
         return torch.mean(total_residual)
 
 class PINNTrainer:
@@ -118,7 +181,7 @@ class PINNTrainer:
         )
         self.mse_loss = nn.MSELoss()
         
-        # Simplified loss weights
+        # Loss weights
         self.w_data = 0.3
         self.w_physics = 0.7
 

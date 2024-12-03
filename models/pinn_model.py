@@ -12,10 +12,15 @@ class SolarPINN(nn.Module):
     AIR_MASS_CHAR = 1.5  # Standard air mass reference (AM1.5)
     BETA_CHAR = 0.5  # Maximum expected turbidity
     CLOUD_CHAR = 1.0  # Maximum cloud cover
+    DISTANCE_CHAR = 1.0  # meters
+    PRESSURE_CHAR = 101325.0  # Pascal (1 atm)
+    POWER_CHAR = 1000.0  # Watts
+    VELOCITY_CHAR = 10.0  # m/s (typical max wind speed)
+    HUMIDITY_CHAR = 100.0  # percent
     
-    def __init__(self, input_dim=8): 
+    def __init__(self, input_dim=12):  # Updated input dimension for new parameters
         super(SolarPINN, self).__init__()
-        # Simplified network architecture with 3 layers
+        # Network architecture
         self.net = nn.Sequential(
             nn.Linear(input_dim, 64),
             nn.Tanh(),
@@ -34,11 +39,13 @@ class SolarPINN(nn.Module):
         self.solar_constant = 1367.0  # Solar constant (W/m²)
         self.beta = 0.125      # Atmospheric turbidity coefficient
         self.ref_temp = 25.0   # Reference temperature (°C)
+        self.ref_pressure = 101325.0  # Reference pressure (Pa)
     
     def normalize_inputs(self, x):
         """Normalize input features to [0,1] range"""
         # Unpack input features
-        lat, lon, time, slope, aspect, atm, cloud_cover, wavelength = (x[:, i] for i in range(8))
+        lat, lon, time, slope, aspect, atm, cloud_cover, wavelength, \
+        panel_width, panel_height, wind_speed, humidity = (x[:, i] for i in range(12))
         
         # Normalize each feature
         norm_lat = (lat + 90) / 180  # [-90, 90] -> [0, 1]
@@ -49,15 +56,27 @@ class SolarPINN(nn.Module):
         norm_atm = atm / self.BETA_CHAR  # Normalize atmospheric turbidity
         norm_cloud = cloud_cover / self.CLOUD_CHAR  # Normalize cloud cover
         norm_wavelength = wavelength / self.WAVELENGTH_CHAR  # [0, 750] -> [0, 1]
+        norm_width = panel_width / self.DISTANCE_CHAR  # Normalize panel width
+        norm_height = panel_height / self.DISTANCE_CHAR  # Normalize panel height
+        norm_wind = wind_speed / self.VELOCITY_CHAR  # Normalize wind speed
+        norm_humidity = humidity / self.HUMIDITY_CHAR  # Normalize humidity
         
         return torch.stack([
             norm_lat, norm_lon, norm_time, norm_slope, norm_aspect,
-            norm_atm, norm_cloud, norm_wavelength
+            norm_atm, norm_cloud, norm_wavelength, norm_width, norm_height,
+            norm_wind, norm_humidity
         ], dim=1)
 
-    def denormalize_outputs(self, y):
-        """Convert normalized predictions back to physical units"""
-        return y * self.IRRADIANCE_CHAR
+    def denormalize_outputs(self, y, panel_width, panel_height):
+        """Convert normalized predictions to physical power output"""
+        # Calculate panel area
+        panel_area = (panel_width * panel_height) / (self.DISTANCE_CHAR ** 2)
+        
+        # Convert normalized irradiance to power output
+        irradiance = y * self.IRRADIANCE_CHAR
+        power_output = irradiance * panel_area  # W/m² * m² = W
+        
+        return power_output / self.POWER_CHAR  # Normalize to characteristic power
 
     def forward(self, x):
         # Normalize inputs
@@ -69,26 +88,27 @@ class SolarPINN(nn.Module):
         # Normalize to [0,1] range using sigmoid
         y_norm = torch.sigmoid(raw_output)
         
-        # Denormalize to physical units
-        return self.denormalize_outputs(y_norm)
+        # Get panel dimensions for power calculation
+        panel_width = x[:, 8]
+        panel_height = x[:, 9]
+        
+        # Denormalize to physical units with power calculation
+        return self.denormalize_outputs(y_norm, panel_width, panel_height)
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
-        # Convert normalized time to day number
         time_phys = time * self.TIME_CHAR
         day_number = (time_phys / 24.0 * 365).clamp(0, 365)
         return torch.deg2rad(23.45 * torch.sin(2 * np.pi * (284 + day_number) / 365))
 
     def hour_angle(self, time, lon):
         """Calculate hour angle (ω)"""
-        # Convert normalized time to hours
         time_phys = time * self.TIME_CHAR
         hour = (time_phys % 24).clamp(0, 24)
         return torch.deg2rad(15 * (hour - 12) + lon * self.ANGLE_CHAR - 180)
 
     def cos_incidence_angle(self, lat, lon, time, slope, aspect):
         """Calculate cosine of incidence angle (θ) and zenith angle"""
-        # Convert normalized values to physical units for angle calculations
         lat_phys = (lat * 180) - 90
         lon_phys = (lon * 360) - 180
         slope_phys = slope * 90
@@ -121,20 +141,22 @@ class SolarPINN(nn.Module):
     def physics_loss(self, x, y_pred):
         # Normalize input features
         x_norm = self.normalize_inputs(x)
-        lat, lon, time, slope, aspect, atm, cloud_cover, wavelength = (x_norm[:, i] for i in range(8))
+        lat, lon, time, slope, aspect, atm, cloud_cover, wavelength, \
+        panel_width, panel_height, wind_speed, humidity = (x_norm[:, i] for i in range(12))
         
         # Get angles using normalized inputs
         cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
 
-        # Calculate normalized air mass
+        # Calculate normalized air mass with pressure correction
         zenith_angle = torch.acos(cos_zenith)
         zenith_deg = torch.rad2deg(zenith_angle)
-        air_mass = 1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364))
+        pressure_ratio = self.ref_pressure / self.PRESSURE_CHAR
+        air_mass = pressure_ratio * (1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364)))
         normalized_air_mass = air_mass / self.AIR_MASS_CHAR
 
         # Simple day/night validation
         nighttime_condition = (cos_zenith <= 0.001)
-        y_pred_norm = y_pred / self.IRRADIANCE_CHAR  # Normalize predictions
+        y_pred_norm = y_pred / self.POWER_CHAR  # Normalize predictions
         nighttime_penalty = torch.where(
             nighttime_condition,
             torch.abs(y_pred_norm) * 100.0,
@@ -144,25 +166,34 @@ class SolarPINN(nn.Module):
         # Normalize atmospheric parameters
         normalized_beta = self.beta / self.BETA_CHAR
         normalized_cloud = cloud_cover / self.CLOUD_CHAR
+        normalized_humidity = humidity  # Already normalized
         
-        # Calculate transmission with normalized values
-        transmission = torch.exp(-normalized_beta * normalized_air_mass)
+        # Calculate transmission with normalized values and humidity effect
+        humidity_factor = 1.0 - 0.1 * normalized_humidity  # Reduce transmission with humidity
+        transmission = torch.exp(-normalized_beta * normalized_air_mass) * humidity_factor
+        
+        # Calculate theoretical power output
         theoretical_irradiance = (self.solar_constant / self.IRRADIANCE_CHAR) * transmission * cos_theta
-        theoretical_irradiance = theoretical_irradiance * (1 - 0.75 * normalized_cloud ** 3.4)  # Add cloud effect
+        theoretical_irradiance = theoretical_irradiance * (1 - 0.75 * normalized_cloud ** 3.4)
         
-        # Physics residual based on normalized values
+        # Calculate panel area and normalize
+        panel_area = (panel_width * panel_height) / (self.DISTANCE_CHAR ** 2)
+        theoretical_power = theoretical_irradiance * panel_area / self.POWER_CHAR
+        
+        # Physics residual based on normalized power values
         physics_residual = torch.where(
-            theoretical_irradiance < 0.001,
+            theoretical_power < 0.001,
             torch.abs(y_pred_norm) * 50.0,
-            (y_pred_norm - theoretical_irradiance)**2
+            (y_pred_norm - theoretical_power)**2
         )
 
-        # Temperature effects (if temperature data is available)
-        normalized_temp = (20.0 - self.ref_temp) / self.TEMP_CHAR  # Using default 20°C if not provided
-        temp_effect = 1.0 - 0.005 * (normalized_temp * self.TEMP_CHAR)  # Temperature coefficient
+        # Temperature and wind speed effects
+        normalized_temp = (20.0 - self.ref_temp) / self.TEMP_CHAR
+        wind_cooling = 0.1 * wind_speed  # Wind speed effect on temperature
+        temp_effect = 1.0 - 0.005 * (normalized_temp * self.TEMP_CHAR - wind_cooling)
         
         # Efficiency constraints (15-25% range)
-        efficiency_norm = y_pred_norm / theoretical_irradiance.clamp(min=0.001)
+        efficiency_norm = y_pred_norm / theoretical_power.clamp(min=0.001)
         efficiency_penalty = (
             torch.relu(0.15 - efficiency_norm) + 
             torch.relu(efficiency_norm - 0.25)
@@ -195,9 +226,13 @@ class PINNTrainer:
         
         y_pred = self.model(x_data)
         
-        # Normalize targets for loss calculation
-        y_data_norm = y_data / self.model.IRRADIANCE_CHAR
-        y_pred_norm = y_pred / self.model.IRRADIANCE_CHAR
+        # Get panel dimensions for power normalization
+        panel_width = x_data[:, 8]
+        panel_height = x_data[:, 9]
+        
+        # Normalize targets and predictions for loss calculation
+        y_data_norm = self.model.denormalize_outputs(y_data / self.model.IRRADIANCE_CHAR, panel_width, panel_height)
+        y_pred_norm = y_pred  # Already normalized to power units
         
         mse = self.mse_loss(y_pred_norm, y_data_norm)
         physics_loss = self.model.physics_loss(x_data, y_pred)

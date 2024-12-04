@@ -1,22 +1,17 @@
 import streamlit as st
-import jax
-import jax.numpy as jnp
-from flax import linen as nn
-import optax
-from solar_pinn import SolarPINN, train_pinn
-from physics_equations import SolarRadiationPhysics
+import numpy as np
+import torch
+from models.pinn_model import SolarPINN, PINNTrainer
+from utils.solar_physics import SolarIrradianceCalculator
+from utils.data_processor import DataProcessor
+from visualization.plots import SolarPlotter
 
-# Initialize PINN model and physics
+# Initialize components
 model = SolarPINN()
-physics = SolarRadiationPhysics()
-
-# Initialize optimizer
-learning_rate = 1e-3
-optimizer = optax.adam(learning_rate)
-
-# Initialize model parameters
-key = jax.random.PRNGKey(0)
-params = model.init(key, jnp.ones((1, 3)))  # 3 input features: latitude, longitude, time
+trainer = PINNTrainer(model)
+calculator = SolarIrradianceCalculator()
+processor = DataProcessor()
+plotter = SolarPlotter()
 
 def main():
     st.title("Solar Panel Placement Optimizer")
@@ -158,17 +153,27 @@ def main():
         wavelength = st.slider("Wavelength Slider", 0.3, 1.0, wavelength)
     
     # Create input data
-    input_data = jnp.array([[latitude, longitude, hour]])
+    input_data = processor.prepare_data(
+        np.array([latitude]),
+        np.array([longitude]),
+        np.array([hour]),
+        np.array([slope]),
+        np.array([aspect]),
+        np.array([atm_transmission]),
+        np.array([cloud_cover]),
+        np.array([wavelength])
+    )
     
-    # Model prediction using PINN
-    prediction = model.apply(params, input_data)
+    # Model prediction
+    with torch.no_grad():
+        prediction = model(input_data)
+        prediction = processor.denormalize_predictions(prediction)
     
-    # Calculate physics-based solar position
-    zenith_angle = physics.solar_position_equations(latitude, longitude, hour)
-    
-    # Calculate irradiance using physics equations
-    physics_irradiance = physics.solar_constant * jnp.cos(zenith_angle) * \
-                        (1 - physics.compute_absorption_coefficient(0))
+    # Calculate physics-based irradiance
+    physics_irradiance = calculator.calculate_irradiance(
+        latitude, longitude, day_number, hour,
+        slope, aspect, atm_transmission
+    )
     
     # Calculate accuracy metrics
     relative_error = abs(prediction.item() - physics_irradiance) / physics_irradiance if physics_irradiance > 0 else float('inf')
@@ -198,31 +203,34 @@ def main():
     
     # Optimization analysis
     if st.button("Run Optimization Analysis"):
-        # Create time points for analysis
-        hours = jnp.linspace(0, 24, 24)
+        slopes = np.linspace(0, 90, 30)
+        aspects = np.linspace(0, 360, 30)
         
-        # Calculate daily irradiance profile
-        irradiance_profile = jnp.zeros(24)
-        for i, hour in enumerate(hours):
-            input_data = jnp.array([[latitude, longitude, hour]])
-            prediction = model.apply(params, input_data)
-            irradiance_profile = irradiance_profile.at[i].set(prediction[0, 0])
+        efficiency = np.zeros((30, 30))
+        for i, s in enumerate(slopes):
+            for j, a in enumerate(aspects):
+                input_data = processor.prepare_data(
+                    np.array([latitude]),
+                    np.array([longitude]),
+                    np.array([hour]),
+                    np.array([s]),
+                    np.array([a]),
+                    np.array([atm_transmission])
+                )
+                with torch.no_grad():
+                    efficiency[i, j] = model(input_data).item()
         
-        # Calculate optimal tilt and orientation
-        zenith_angles = jnp.array([physics.solar_position_equations(latitude, longitude, h) for h in hours])
-        optimal_tilt = jnp.rad2deg(jnp.mean(zenith_angles))
-        optimal_orientation = 180.0  # South-facing in Northern hemisphere, North-facing in Southern
+        # Plot optimization results
+        fig = plotter.plot_optimization_results(slopes, aspects, efficiency)
+        st.plotly_chart(fig)
         
-        # Display results
-        st.subheader("Daily Solar Irradiance Profile")
-        st.line_chart(irradiance_profile)
-        
+        # Find optimal parameters
+        opt_idx = np.unravel_index(np.argmax(efficiency), efficiency.shape)
         st.success(f"""
         Optimal Parameters:
-        - Tilt Angle: {optimal_tilt:.1f}°
-        - Orientation: {optimal_orientation:.1f}° ({optimal_orientation <= 180 and 'South' or 'North'}-facing)
-        - Peak Irradiance: {jnp.max(irradiance_profile):.2f} W/m²
-        - Daily Average: {jnp.mean(irradiance_profile):.2f} W/m²
+        - Slope: {slopes[opt_idx[0]]:.1f}°
+        - Aspect: {aspects[opt_idx[1]]:.1f}°
+        - Expected Efficiency: {efficiency[opt_idx]:.2f}
         """)
 
 if __name__ == "__main__":

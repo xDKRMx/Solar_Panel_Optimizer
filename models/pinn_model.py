@@ -7,9 +7,9 @@ class SolarPINN(nn.Module):
 
     def __init__(self, input_dim=8):  # Updated for cloud_cover and wavelength
         super(SolarPINN, self).__init__()
-        self.net = nn.Sequential(nn.Linear(input_dim, 64), nn.Tanh(),
-                                 nn.Linear(64, 128), nn.Tanh(),
-                                 nn.Linear(128, 64), nn.Tanh(),
+        self.net = nn.Sequential(nn.Linear(input_dim, 64), nn.LeakyReLU(),
+                                 nn.Linear(64, 128), nn.LeakyReLU(),
+                                 nn.Linear(128, 64), nn.LeakyReLU(),
                                  nn.Linear(64, 1))
         self.solar_constant = 1367.0  # W/m²
         self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
@@ -103,34 +103,36 @@ class SolarPINN(nn.Module):
         nighttime_threshold = 0.001
         twilight_threshold = 0.1
         nighttime_condition = (cos_zenith <= nighttime_threshold)
-        twilight_condition = (cos_zenith > nighttime_threshold) & (cos_zenith <= twilight_threshold)
-        
+        twilight_condition = (cos_zenith > nighttime_threshold) & (
+            cos_zenith <= twilight_threshold)
+
         # Stronger penalty for nighttime predictions
         nighttime_penalty = torch.where(
             nighttime_condition,
             torch.abs(y_pred) * 1000.0,  # Increased penalty for nighttime
             torch.where(
                 twilight_condition,
-                torch.abs(y_pred - self.solar_constant * cos_zenith) * 100.0,  # Smooth transition
-                torch.zeros_like(y_pred)
-            ))
+                torch.abs(y_pred - self.solar_constant * cos_zenith) *
+                100.0,  # Smooth transition
+                torch.zeros_like(y_pred)))
 
         # Compute gradients for physics residual
         y_grad = torch.autograd.grad(y_pred.sum(),
-                                   x,
-                                   create_graph=True,
-                                   retain_graph=True)[0]
+                                     x,
+                                     create_graph=True,
+                                     retain_graph=True)[0]
 
         # Air mass ratio calculation using Kasten and Young's formula
         zenith_angle = torch.acos(cos_zenith)
         zenith_deg = torch.rad2deg(zenith_angle)
-        air_mass = 1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364))
+        air_mass = 1.0 / (cos_zenith + 0.50572 *
+                          (96.07995 - zenith_deg).pow(-1.6364))
 
         # Calculate optical depth with enhanced cloud physics
         optical_depth = self.calculate_optical_depth(wavelength,
-                                                   air_mass,
-                                                   altitude=0,
-                                                   cloud_cover=cloud_cover)
+                                                     air_mass,
+                                                     altitude=0,
+                                                     cloud_cover=cloud_cover)
 
         # Enhanced cloud transmission model with altitude dependency
         base_transmission = 1.0 - self.cloud_alpha * (cloud_cover**2)
@@ -139,9 +141,9 @@ class SolarPINN(nn.Module):
 
         # Calculate second-order derivatives for energy flux conservation
         y_grad2 = torch.autograd.grad(y_grad.sum(),
-                                    x,
-                                    create_graph=True,
-                                    retain_graph=True)[0]
+                                      x,
+                                      create_graph=True,
+                                      retain_graph=True)[0]
 
         # Energy flux conservation
         flux_divergence = y_grad2[:, 0] + y_grad2[:, 1]
@@ -149,20 +151,22 @@ class SolarPINN(nn.Module):
         conservation_residual = flux_divergence + source_term
 
         # Enhanced theoretical irradiance components for full spectrum
-        direct_irradiance = (self.solar_constant * 
-                           torch.exp(-optical_depth * air_mass) * 
-                           cos_theta * cloud_transmission)
-        
+        direct_irradiance = (self.solar_constant *
+                             torch.exp(-optical_depth * air_mass) * cos_theta *
+                             cloud_transmission)
+
         # Enhanced diffuse radiation model
         diffuse_factor = 0.3 + 0.7 * cloud_cover  # Increased diffuse component with clouds
-        diffuse_irradiance = (self.solar_constant * diffuse_factor * 
-                            (1.0 - cloud_transmission) * cos_zenith *
-                            torch.exp(-optical_depth * air_mass * 0.5))  # Less attenuation for diffuse
-        
+        diffuse_irradiance = (self.solar_constant * diffuse_factor *
+                              (1.0 - cloud_transmission) * cos_zenith *
+                              torch.exp(-optical_depth * air_mass * 0.5)
+                              )  # Less attenuation for diffuse
+
         # Enhanced ground reflection model
         ground_albedo = 0.2 + 0.1 * cloud_cover  # Higher albedo under cloudy conditions
-        reflected_irradiance = (ground_albedo * (direct_irradiance + diffuse_irradiance) * 
-                              (1.0 - cos_theta) * 0.5)
+        reflected_irradiance = (ground_albedo *
+                                (direct_irradiance + diffuse_irradiance) *
+                                (1.0 - cos_theta) * 0.5)
 
         # Ensure proper cos_zenith clipping and set nighttime irradiance
         cos_zenith = torch.clamp(cos_zenith, min=0.001, max=1.0)
@@ -174,9 +178,9 @@ class SolarPINN(nn.Module):
         # Strengthen nighttime constraint with increased penalty
         nighttime_penalty = torch.where(
             cos_zenith <= 0.001,
-            torch.abs(y_pred) * 1000.0,  # Increased penalty for non-zero nighttime predictions
-            torch.zeros_like(y_pred)
-        )
+            torch.abs(y_pred) *
+            1000.0,  # Increased penalty for non-zero nighttime predictions
+            torch.zeros_like(y_pred))
 
         # Physics residuals
         spatial_residual = y_grad[:, 0]**2 + y_grad[:, 1]**2
@@ -185,9 +189,9 @@ class SolarPINN(nn.Module):
         # Strengthen physics-based matching
         physics_residual = torch.where(
             theoretical_irradiance < 1.0,  # Near-zero physics-based irradiance
-            torch.abs(y_pred) * 500.0,    # Strong penalty for non-zero predictions
-            (y_pred - theoretical_irradiance)**2
-        )
+            torch.abs(y_pred) *
+            500.0,  # Strong penalty for non-zero predictions
+            (y_pred - theoretical_irradiance)**2)
 
         # Dynamic weighting
         spatial_weight = 0.2 * torch.exp(-conservation_residual.abs().mean())
@@ -198,30 +202,31 @@ class SolarPINN(nn.Module):
         # Update efficiency bounds for expanded range
         efficiency_min = 0.15  # 15%
         efficiency_max = 0.25  # 25%
-        
+
         # Exponential barrier functions for smoother gradients
         efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
         efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
-        
+
         # Increased penalty weight for stricter enforcement (2000.0)
         efficiency_penalty = (efficiency_lower + efficiency_upper) * 2000.0
-        
+
         # Additional exponential barrier terms with higher penalties (5000.0)
         additional_lower_barrier = torch.exp(-200 * (y_pred - efficiency_min))
         additional_upper_barrier = torch.exp(200 * (y_pred - efficiency_max))
-        efficiency_penalty += (additional_lower_barrier + additional_upper_barrier) * 5000.0
+        efficiency_penalty += (additional_lower_barrier +
+                               additional_upper_barrier) * 5000.0
 
         # Update clipping penalty
-        clipping_penalty = torch.mean(torch.abs(
-            y_pred - torch.clamp(y_pred, min=0.15, max=0.25)
-        )) * 100.0
+        clipping_penalty = torch.mean(
+            torch.abs(y_pred -
+                      torch.clamp(y_pred, min=0.15, max=0.25))) * 100.0
 
         # Update total_residual calculation
         total_residual = (
             spatial_weight * spatial_residual +
-            temporal_weight * temporal_residual +
-            5.0 * physics_residual +
-            boundary_weight * (torch.relu(-y_pred) + torch.relu(y_pred - self.solar_constant)) +
+            temporal_weight * temporal_residual + 5.0 * physics_residual +
+            boundary_weight *
+            (torch.relu(-y_pred) + torch.relu(y_pred - self.solar_constant)) +
             conservation_weight * conservation_residual**2 +
             10.0 * nighttime_penalty +
             efficiency_penalty +  # Increased penalty weight

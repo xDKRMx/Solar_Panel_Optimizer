@@ -1,13 +1,13 @@
 import streamlit as st
 import numpy as np
 import torch
-from models.pinn_model import PINN, PINNTrainer
+from models.pinn_model import SolarPINN, PINNTrainer
 from utils.solar_physics import SolarIrradianceCalculator
 from utils.data_processor import DataProcessor
 from visualization.plots import SolarPlotter
 
 # Initialize components
-model = PINN()
+model = SolarPINN()
 trainer = PINNTrainer(model)
 calculator = SolarIrradianceCalculator()
 processor = DataProcessor()

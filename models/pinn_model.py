@@ -5,33 +5,35 @@ import torch.nn as nn
 
 class SolarPINN(nn.Module):
 
-    def __init__(self, input_dim=8):  # Updated for cloud_cover and wavelength
+    def __init__(self, input_dim=8):
         super(SolarPINN, self).__init__()
         self.net = nn.Sequential(nn.Linear(input_dim, 64), nn.Tanh(),
                                nn.Linear(64, 128), nn.Tanh(),
                                nn.Linear(128, 64), nn.Tanh(),
                                nn.Linear(64, 1))
-        self.solar_constant = 1367.0  # W/m²
-        self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
-        self.beta = 0.1  # Default aerosol optical thickness
-        self.alpha = 1.3  # Default Ångström exponent
-        self.cloud_alpha = 0.75  # Empirically derived cloud transmission parameter
-        self.ref_temp = 25.0  # Reference temperature (°C)
-        self.temp_coeff = 0.004  # Temperature coefficient (/°C)
+        # Reference values for non-dimensionalization
+        self.I0 = 1367.0  # W/m² (solar constant)
+        self.lambda_ref = 0.5  # μm (reference wavelength)
+        self.T_ref = 298.15  # K (25°C reference temperature)
+        
+        # Simplified physics parameters
+        self.beta = 0.1  # Aerosol optical thickness
+        self.alpha = 1.3  # Ångström exponent
+        self.cloud_alpha = 0.75  # Cloud transmission parameter
 
     def forward(self, x):
-        raw_output = self.net(x)
-        return torch.sigmoid(raw_output)
+        return torch.sigmoid(self.net(x))
 
     def solar_declination(self, time):
-        """Calculate solar declination angle (δ)"""
-        day_number = (time / 24.0 * 365).clamp(0, 365)
-        return torch.deg2rad(23.45 * torch.sin(2 * np.pi *
-                                              (284 + day_number) / 365))
+        """Calculate solar declination angle (δ) with normalized time"""
+        t_star = time / 24.0  # Normalize time to [0, 1] for daily cycle
+        day_number = (t_star * 365).clamp(0, 365)
+        return torch.deg2rad(23.45 * torch.sin(2 * np.pi * (284 + day_number) / 365))
 
     def hour_angle(self, time, lon):
-        """Calculate hour angle (ω)"""
-        hour = (time % 24).clamp(0, 24)
+        """Calculate hour angle (ω) with normalized time"""
+        t_star = time / 24.0  # Normalize time to [0, 1]
+        hour = (t_star * 24) % 24
         return torch.deg2rad(15 * (hour - 12) + lon)
 
     def cos_incidence_angle(self, lat, lon, time, slope, aspect):
@@ -58,13 +60,7 @@ class SolarPINN(nn.Module):
             torch.cos(declination) * torch.sin(hour_angle) *
             torch.sin(slope_rad) * torch.sin(aspect_rad))
 
-        return torch.clamp(cos_theta, min=0.0), torch.clamp(
-            cos_zenith, min=0.0001)  # Avoid division by zero
-
-    def calculate_optical_depth(self, wavelength):
-        """Calculate optical depth using Ångström turbidity formula"""
-        # Exact Ångström turbidity formula from solar_physics.py
-        return self.beta * (wavelength / self.ref_wavelength)**(-self.alpha)
+        return torch.clamp(cos_theta, min=0.0), torch.clamp(cos_zenith, min=0.0001)
 
     def physics_loss(self, x, y_pred):
         # Extract parameters from input
@@ -72,61 +68,35 @@ class SolarPINN(nn.Module):
             x[:, i] for i in range(8))
 
         # Calculate cos_theta and cos_zenith
-        cos_theta, cos_zenith = self.cos_incidence_angle(
-            lat, lon, time, slope, aspect)
+        cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
 
-        # Direct zero assignment for nighttime (cos_zenith <= 0)
+        # Nighttime constraint (zero irradiance when cos_zenith <= 0)
         nighttime_mask = (cos_zenith <= 0)
         y_pred = torch.where(nighttime_mask, torch.zeros_like(y_pred), y_pred)
 
-        # Calculate air mass using Kasten and Young formula
-        zenith_angle = torch.acos(cos_zenith)
-        zenith_deg = torch.rad2deg(zenith_angle)
-        air_mass = 1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364))
+        # Simplified air mass calculation
+        air_mass = 1.0 / (cos_zenith + 1e-6)  # Simplified from Kasten-Young formula
 
-        # Calculate optical depth using simplified Ångström formula
-        optical_depth = self.calculate_optical_depth(wavelength)
-
-        # Simplified cloud transmission model
+        # Non-dimensionalized and simplified calculations
+        wavelength_star = wavelength / self.lambda_ref
+        optical_depth = self.beta * (wavelength_star)**(-self.alpha)
         cloud_transmission = 1.0 - self.cloud_alpha * cloud_cover
 
-        # Calculate direct irradiance
-        direct_irradiance = (self.solar_constant * 
-                           torch.exp(-optical_depth * air_mass) * 
-                           cos_theta * cloud_transmission * atm)
+        # Simplified irradiance calculation (non-dimensionalized)
+        irradiance_star = (torch.exp(-optical_depth * air_mass) * 
+                          cos_theta * cloud_transmission * atm)
 
-        # Dynamic diffuse irradiance calculation
-        diffuse_factor = 0.3 + 0.7 * cloud_cover  # Dynamic factor based on cloud cover
-        diffuse_irradiance = diffuse_factor * direct_irradiance * (1.0 - cos_zenith)
+        # Simple min/max clipping for efficiency
+        y_pred_clipped = torch.clamp(y_pred, min=0.15, max=0.25)
+        efficiency_penalty = torch.mean(torch.abs(y_pred - y_pred_clipped))
 
-        # Total theoretical irradiance
-        theoretical_irradiance = direct_irradiance + diffuse_irradiance
+        # Physics residual (simplified)
+        physics_residual = torch.abs(y_pred - irradiance_star)
 
-        # Efficiency constraints using exponential barrier functions
-        efficiency_min = 0.15
-        efficiency_max = 0.25
-        efficiency_lower_penalty = torch.exp(-100 * (y_pred - efficiency_min))
-        efficiency_upper_penalty = torch.exp(100 * (y_pred - efficiency_max))
-        efficiency_penalty = efficiency_lower_penalty + efficiency_upper_penalty
-
-        # Calculate residuals
-        spatial_residual = torch.mean(torch.abs(torch.gradient(y_pred, dim=0)[0]))
-        temporal_residual = torch.mean(torch.abs(torch.gradient(y_pred, dim=1)[0]))
-
-        # Physics-based residual with relative error
-        physics_residual = torch.abs(y_pred - theoretical_irradiance) / (theoretical_irradiance + 1e-6)
-
-        # Dynamic weighting based on mean residual errors
-        spatial_weight = torch.exp(-spatial_residual.abs().mean())
-        temporal_weight = torch.exp(-temporal_residual.abs().mean())
-        physics_weight = torch.exp(-physics_residual.abs().mean())
-
-        # Total loss with dynamic weights
+        # Total loss with simplified weights
         total_loss = (
-            spatial_weight * spatial_residual +
-            temporal_weight * temporal_residual +
-            physics_weight * physics_residual.mean() +
-            0.1 * efficiency_penalty  # Add efficiency penalty with small weight
+            0.7 * physics_residual.mean() +  # Main physics component
+            0.3 * efficiency_penalty  # Efficiency constraints
         )
 
         return total_loss

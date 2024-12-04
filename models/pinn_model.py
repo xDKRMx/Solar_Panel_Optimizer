@@ -178,54 +178,68 @@ class SolarPINN(nn.Module):
             torch.zeros_like(y_pred)
         )
 
-        # Physics residuals
+        # Enhanced physics residuals with adaptive weights
         spatial_residual = y_grad[:, 0]**2 + y_grad[:, 1]**2
         temporal_residual = y_grad[:, 2]
-
-        # Strengthen physics-based matching
-        physics_residual = torch.where(
-            theoretical_irradiance < 1.0,  # Near-zero physics-based irradiance
-            torch.abs(y_pred) * 500.0,    # Strong penalty for non-zero predictions
-            (y_pred - theoretical_irradiance)**2
+        
+        # Calculate relative error for physics-based matching
+        relative_error = torch.where(
+            theoretical_irradiance > 1.0,
+            torch.abs(y_pred - theoretical_irradiance) / theoretical_irradiance,
+            torch.abs(y_pred)
         )
+        
+        # Adaptive physics residual with smoother transition
+        physics_residual = torch.where(
+            theoretical_irradiance < 1.0,
+            torch.abs(y_pred) * 250.0 * torch.exp(-relative_error),  # Reduced penalty with smooth decay
+            relative_error**2 * theoretical_irradiance  # Scale penalty with theoretical value
+        )
+        
+        # Dynamic weighting with confidence-based adaptation
+        confidence = torch.exp(-relative_error.mean())
+        spatial_weight = 0.25 * confidence
+        temporal_weight = 0.25 * confidence
+        boundary_weight = 0.20 * (1.0 - confidence)  # Increase boundary importance when confidence is low
+        conservation_weight = 0.20
 
-        # Dynamic weighting
-        spatial_weight = 0.2 * torch.exp(-conservation_residual.abs().mean())
-        temporal_weight = 0.2 * torch.exp(-temporal_residual.abs().mean())
-        boundary_weight = 0.15
-        conservation_weight = 0.15
-
-        # Update efficiency bounds for expanded range
-        efficiency_min = 0.15  # 15%
-        efficiency_max = 0.25  # 25%
+        # Update efficiency bounds for wider range
+        efficiency_min = 0.10  # 10%
+        efficiency_max = 0.30  # 30%
         
-        # Exponential barrier functions for smoother gradients
-        efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
-        efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
+        # Adaptive barrier functions based on prediction confidence
+        confidence_factor = torch.exp(-torch.abs(physics_residual).mean())
+        barrier_strength = 50.0 + 150.0 * (1.0 - confidence_factor)  # Adaptive strength
         
-        # Increased penalty weight for stricter enforcement (2000.0)
-        efficiency_penalty = (efficiency_lower + efficiency_upper) * 2000.0
+        # Smoother barrier functions with adaptive strength
+        efficiency_lower = torch.exp(-barrier_strength * (y_pred - efficiency_min))
+        efficiency_upper = torch.exp(barrier_strength * (y_pred - efficiency_max))
         
-        # Additional exponential barrier terms with higher penalties (5000.0)
-        additional_lower_barrier = torch.exp(-200 * (y_pred - efficiency_min))
-        additional_upper_barrier = torch.exp(200 * (y_pred - efficiency_max))
-        efficiency_penalty += (additional_lower_barrier + additional_upper_barrier) * 5000.0
+        # Dynamic penalty weight based on prediction confidence
+        base_penalty = 1000.0 * (1.0 + confidence_factor)
+        efficiency_penalty = (efficiency_lower + efficiency_upper) * base_penalty
+        
+        # Additional smooth barriers with reduced penalties for wider range
+        additional_lower_barrier = torch.exp(-barrier_strength * 1.5 * (y_pred - efficiency_min))
+        additional_upper_barrier = torch.exp(barrier_strength * 1.5 * (y_pred - efficiency_max))
+        efficiency_penalty += (additional_lower_barrier + additional_upper_barrier) * base_penalty * 0.5
 
         # Update clipping penalty
         clipping_penalty = torch.mean(torch.abs(
             y_pred - torch.clamp(y_pred, min=0.15, max=0.25)
         )) * 100.0
 
-        # Update total_residual calculation
+        # Enhanced total residual calculation with adaptive weights
+        physics_weight = 3.0 + 2.0 * confidence  # Adaptive physics weight
+        
         total_residual = (
             spatial_weight * spatial_residual +
             temporal_weight * temporal_residual +
-            5.0 * physics_residual +
+            physics_weight * physics_residual +
             boundary_weight * (torch.relu(-y_pred) + torch.relu(y_pred - self.solar_constant)) +
             conservation_weight * conservation_residual**2 +
-            10.0 * nighttime_penalty +
-            efficiency_penalty +  # Increased penalty weight
-            clipping_penalty  # Add hard clipping penalty
+            5.0 * nighttime_penalty +  # Reduced nighttime penalty
+            efficiency_penalty * (1.0 - 0.3 * confidence)  # Relaxed efficiency penalty with high confidence
         )
 
         # Apply gradient clipping for stability

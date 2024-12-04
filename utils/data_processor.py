@@ -23,10 +23,8 @@ class DataProcessor:
                      aspect,
                      atm,
                      cloud_cover=None,
-                     wavelength=None,
-                     altitude=None,
-                     temperature=None):
-        """Prepare and non-dimensionalize data for PINN model with enhanced parameters"""
+                     wavelength=None):
+        """Prepare and non-dimensionalize data for PINN model"""
         # Convert to numpy arrays if not already
         lat = np.asarray(lat)
         lon = np.asarray(lon)
@@ -45,29 +43,16 @@ class DataProcessor:
             wavelength = np.full_like(lat, 0.5)  # Default wavelength in μm
         else:
             wavelength = np.asarray(wavelength)
-            
-        if altitude is None:
-            altitude = np.zeros_like(lat)  # Sea level by default
-        else:
-            altitude = np.asarray(altitude)
-            
-        if temperature is None:
-            temperature = np.full_like(lat, 25.0)  # Default temperature 25°C
-        else:
-            temperature = np.asarray(temperature)
 
         # Non-dimensionalize the data
         time_nd = time / self.time_scale
         wavelength_nd = wavelength / 0.5  # Normalize to reference wavelength
-        altitude_nd = altitude / 8848.0  # Normalize to Mt. Everest height
-        temperature_nd = (temperature - (-20)) / (60 - (-20))  # Normalize to typical range [-20, 60]°C
 
         # Angles (lat, lon, slope, aspect) are already non-dimensional
         # Atmospheric transmission, cloud cover are already non-dimensional
 
         data = np.column_stack([
-            lat, lon, time_nd, slope, aspect, atm, cloud_cover, wavelength_nd,
-            altitude_nd, temperature_nd
+            lat, lon, time_nd, slope, aspect, atm, cloud_cover, wavelength_nd
         ])
         return torch.FloatTensor(data)
 

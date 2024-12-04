@@ -80,23 +80,33 @@ class SolarPINN(nn.Module):
         # Non-dimensionalized and simplified calculations
         wavelength_star = wavelength / self.lambda_ref
         optical_depth = self.beta * (wavelength_star)**(-self.alpha)
-        cloud_transmission = 1.0 - self.cloud_alpha * cloud_cover
+        
+        # Updated cloud transmission with cubic dependency
+        cloud_transmission = 1.0 - self.cloud_alpha * (cloud_cover ** 3)
 
         # Simplified irradiance calculation (non-dimensionalized)
         irradiance_star = (torch.exp(-optical_depth * air_mass) * 
                           cos_theta * cloud_transmission * atm)
 
-        # Simple min/max clipping for efficiency
-        y_pred_clipped = torch.clamp(y_pred, min=0.15, max=0.25)
-        efficiency_penalty = torch.mean(torch.abs(y_pred - y_pred_clipped))
+        # Exponential barrier functions for efficiency constraints
+        efficiency_min, efficiency_max = 0.15, 0.25
+        efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
+        efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
+        efficiency_penalty = efficiency_lower + efficiency_upper
 
-        # Physics residual (simplified)
-        physics_residual = torch.abs(y_pred - irradiance_star)
+        # Enhanced physics residual calculation
+        physics_residual = torch.abs(y_pred - irradiance_star) + \
+                          torch.abs(torch.gradient(y_pred, dim=0)[0]) + \
+                          0.1 * torch.abs(torch.gradient(y_pred, dim=1)[0])
 
-        # Total loss with simplified weights
+        # Dynamic loss weights
+        physics_weight = torch.exp(-physics_residual.mean())
+        efficiency_weight = torch.exp(-efficiency_penalty)
+
+        # Total loss with dynamic weights
         total_loss = (
-            0.7 * physics_residual.mean() +  # Main physics component
-            0.3 * efficiency_penalty  # Efficiency constraints
+            physics_weight * physics_residual.mean() +
+            efficiency_weight * efficiency_penalty
         )
 
         return total_loss

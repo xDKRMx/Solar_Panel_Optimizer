@@ -7,6 +7,7 @@ class SolarIrradianceCalculator:
         self.alpha = 1.3  # Default Ångström exponent
         self.cloud_alpha = 0.75  # Empirical cloud transmission parameter
         self.ref_wavelength = 0.5  # μm, reference wavelength
+        self.albedo = 0.2  # Default surface reflectivity
 
     def solar_declination(self, day_number):
         """Calculate solar declination angle"""
@@ -23,7 +24,7 @@ class SolarIrradianceCalculator:
         hour_rad = np.radians(hour_angle)
         slope_rad = np.radians(slope)
         aspect_rad = np.radians(aspect)
-        
+
         return (np.sin(lat_rad) * np.sin(decl_rad) * np.cos(slope_rad) -
                 np.cos(lat_rad) * np.sin(decl_rad) * np.sin(slope_rad) * np.cos(aspect_rad) +
                 np.cos(lat_rad) * np.cos(decl_rad) * np.cos(hour_rad) * np.cos(slope_rad) +
@@ -45,33 +46,39 @@ class SolarIrradianceCalculator:
         declination = self.solar_declination(day_number)
         hour_ang = self.hour_angle(hour, longitude)
         cos_inc = self.cos_incidence_angle(latitude, declination, hour_ang, slope, aspect)
-        
+
         # Calculate zenith angle and air mass
         lat_rad = np.radians(latitude)
         decl_rad = np.radians(declination)
         hour_rad = np.radians(hour_ang)
         cos_zenith = (np.sin(lat_rad) * np.sin(decl_rad) +
                      np.cos(lat_rad) * np.cos(decl_rad) * np.cos(hour_rad))
-        
+
         # Check if it's nighttime (sun below horizon)
         if cos_zenith <= 0:
             return 0.0
-            
+
         # Prevent division by zero in air mass calculation
         cos_zenith = np.clip(cos_zenith, 0.001, 1.0)
         zenith_angle = np.arccos(cos_zenith)
-        
+
         # Calculate atmospheric effects
         air_mass = self.calculate_air_mass(zenith_angle)
         optical_depth = self.calculate_optical_depth(wavelength)
-        
+
         # Cloud cover effect
         cloud_transmission = 1.0 - self.cloud_alpha * (cloud_cover ** 3)
-        
+
         # Direct normal irradiance with Beer-Lambert law
         dni = self.solar_constant * np.exp(-optical_depth * air_mass) * atm_transmission * cloud_transmission
-        
+
+        # Diffuse irradiance
+        diffuse_irradiance = 0.3 * dni * (1 - cos_zenith)
+
+        # Reflected irradiance
+        reflected_irradiance = self.albedo * dni * (1 - cos_zenith)
+
         # Surface irradiance
-        irradiance = dni * np.maximum(0, cos_inc)
-        
+        irradiance = dni * np.maximum(0, cos_inc) + diffuse_irradiance + reflected_irradiance
+
         return irradiance

@@ -61,21 +61,10 @@ class SolarPINN(nn.Module):
         return torch.clamp(cos_theta, min=0.0), torch.clamp(
             cos_zenith, min=0.0001)  # Avoid division by zero
 
-    def calculate_optical_depth(self, wavelength, air_mass, altitude=0, cloud_cover=0):
-        """Calculate advanced multi-wavelength optical depth with cloud and altitude effects"""
-        # Base optical depth using Ångström turbidity formula
-        base_depth = self.beta * (wavelength / self.ref_wavelength)**(-self.alpha)
-
-        # Altitude correction (exponential decrease with height)
-        altitude_factor = torch.exp(-altitude / 7.4)  # 7.4 km scale height
-
-        # Enhanced cloud model with altitude dependency
-        cloud_factor = 1.0 + (cloud_cover**3) * (1.0 - 0.5 * altitude_factor)
-
-        # Air mass dependency with cloud-modified saturation
-        air_mass_factor = torch.exp(-base_depth * air_mass * altitude_factor * cloud_factor)
-
-        return base_depth * air_mass_factor
+    def calculate_optical_depth(self, wavelength):
+        """Calculate optical depth using Ångström turbidity formula"""
+        # Exact Ångström turbidity formula from solar_physics.py
+        return self.beta * (wavelength / self.ref_wavelength)**(-self.alpha)
 
     def physics_loss(self, x, y_pred):
         # Extract parameters from input
@@ -90,71 +79,49 @@ class SolarPINN(nn.Module):
         nighttime_mask = (cos_zenith <= 0)
         y_pred = torch.where(nighttime_mask, torch.zeros_like(y_pred), y_pred)
 
-        # Calculate air mass and optical depth
+        # Calculate air mass using Kasten and Young formula
         zenith_angle = torch.acos(cos_zenith)
         zenith_deg = torch.rad2deg(zenith_angle)
         air_mass = 1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364))
-        optical_depth = self.calculate_optical_depth(wavelength, air_mass, altitude=0, cloud_cover=cloud_cover)
 
-        # Updated cloud transmission with cubic dependency (as per solar_physics.py)
+        # Calculate optical depth using simplified Ångström formula
+        optical_depth = self.calculate_optical_depth(wavelength)
+
+        # Simple cloud transmission model aligned with solar_physics.py
         cloud_transmission = 1.0 - self.cloud_alpha * (cloud_cover**3)
 
-        # Updated diffuse irradiance coefficients based on validated data
-        diffuse_base = 0.25  # Base diffuse component
-        diffuse_cloud = 0.75  # Cloud-dependent component
-        diffuse_factor = diffuse_base + diffuse_cloud * cloud_cover
-
-        # Calculate theoretical irradiance components
+        # Simplified irradiance calculations
         direct_irradiance = (self.solar_constant * 
                            torch.exp(-optical_depth * air_mass) * 
-                           cos_theta * cloud_transmission)
+                           cos_theta * cloud_transmission * atm)
 
-        diffuse_irradiance = (self.solar_constant * diffuse_factor *
-                            (1.0 - cloud_transmission) * cos_zenith *
-                            torch.exp(-optical_depth * air_mass * 0.5))
+        # Simplified diffuse irradiance calculation
+        diffuse_irradiance = 0.3 * direct_irradiance * (1.0 - cos_zenith)
 
-        # Updated ground reflection with cloud-dependent albedo
-        ground_albedo = 0.2 + 0.1 * cloud_cover
-        reflected_irradiance = (ground_albedo * 
-                              (direct_irradiance + diffuse_irradiance) * 
-                              (1.0 - cos_theta) * 0.5)
+        # Total theoretical irradiance
+        theoretical_irradiance = direct_irradiance + diffuse_irradiance
 
-        theoretical_irradiance = direct_irradiance + diffuse_irradiance + reflected_irradiance
+        # Simple efficiency clamping (15%-25%)
+        y_pred = torch.clamp(y_pred, min=0.15, max=0.25)
 
-        # Calculate physics residuals
+        # Calculate residuals
         spatial_residual = torch.mean(torch.abs(torch.gradient(y_pred, dim=0)[0]))
         temporal_residual = torch.mean(torch.abs(torch.gradient(y_pred, dim=1)[0]))
 
-        # Soft efficiency constraints with wider range
-        efficiency_min = 0.10  # 10%
-        efficiency_max = 0.30  # 30%
-        
-        # Smooth barrier functions for efficiency constraints
-        efficiency_penalty = torch.mean(
-            torch.exp(-50 * (y_pred - efficiency_min)) +
-            torch.exp(50 * (y_pred - efficiency_max))
-        )
+        # Physics-based residual with simplified relative error
+        physics_residual = torch.abs(y_pred - theoretical_irradiance) / (theoretical_irradiance + 1e-6)
 
-        # Physics-based residual with relative error
-        physics_residual = torch.where(
-            theoretical_irradiance > 1.0,
-            torch.abs(y_pred - theoretical_irradiance) / theoretical_irradiance,
-            torch.abs(y_pred)
-        )
-
-        # Adaptive weights based on prediction confidence
+        # Dynamic weighting with reduced physics weight
         confidence = torch.exp(-physics_residual.mean())
-        spatial_weight = 0.25 * confidence
-        temporal_weight = 0.25 * confidence
-        physics_weight = 0.3 + 0.2 * confidence
-        efficiency_weight = 0.2 * (1.0 - confidence)
+        spatial_weight = 0.3 * confidence
+        temporal_weight = 0.3 * confidence
+        physics_weight = 0.2  # Reduced fixed weight for physics residual
 
-        # Total loss with adaptive weights
+        # Total loss with simplified weights
         total_loss = (
             spatial_weight * spatial_residual +
             temporal_weight * temporal_residual +
-            physics_weight * physics_residual.mean() +
-            efficiency_weight * efficiency_penalty
+            physics_weight * physics_residual.mean()
         )
 
         return total_loss

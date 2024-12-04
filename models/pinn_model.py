@@ -7,10 +7,21 @@ class SolarPINN(nn.Module):
 
     def __init__(self, input_dim=8):  # Updated for cloud_cover and wavelength
         super(SolarPINN, self).__init__()
-        self.net = nn.Sequential(nn.Linear(input_dim, 64), nn.LeakyReLU(),
-                                 nn.Linear(64, 128), nn.LeakyReLU(),
-                                 nn.Linear(128, 64), nn.LeakyReLU(),
-                                 nn.Linear(64, 1))
+        # Enhanced network architecture with wider layers and dropout
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.1),
+            nn.Linear(128, 256),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.1),
+            nn.Linear(256, 256),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.1),
+            nn.Linear(256, 128),
+            nn.LeakyReLU(0.2),
+            nn.Linear(128, 1)
+        )
         self.solar_constant = 1367.0  # W/m²
         self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
         self.beta = 0.1  # Default aerosol optical thickness
@@ -21,8 +32,9 @@ class SolarPINN(nn.Module):
 
     def forward(self, x):
         raw_output = self.net(x)
-        # Let data_processor handle efficiency clipping
-        return torch.sigmoid(raw_output)
+        # Enhanced scaling for wider range predictions
+        scaled_output = torch.sigmoid(raw_output) * 0.35  # Allow up to 35% efficiency
+        return scaled_output
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -199,9 +211,9 @@ class SolarPINN(nn.Module):
         boundary_weight = 0.15
         conservation_weight = 0.15
 
-        # Update efficiency bounds for expanded range
-        efficiency_min = 0.15  # 15%
-        efficiency_max = 0.25  # 25%
+        # Expanded efficiency bounds for wider range
+        efficiency_min = 0.10  # 10%
+        efficiency_max = 0.35  # 35%
 
         # Exponential barrier functions for smoother gradients
         efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
@@ -216,10 +228,10 @@ class SolarPINN(nn.Module):
         efficiency_penalty += (additional_lower_barrier +
                                additional_upper_barrier) * 5000.0
 
-        # Update clipping penalty
+        # Updated clipping penalty with wider bounds
         clipping_penalty = torch.mean(
             torch.abs(y_pred -
-                      torch.clamp(y_pred, min=0.15, max=0.25))) * 100.0
+                      torch.clamp(y_pred, min=0.10, max=0.35))) * 50.0  # Reduced penalty weight
 
         # Update total_residual calculation
         total_residual = (

@@ -81,6 +81,7 @@ class PINN(nn.Module):
         return torch.clamp(cos_theta, min=0.0), torch.clamp(cos_zenith, min=0.0001)
 
     def physics_loss(self, x, y_pred):
+        """Calculate physics-informed loss with enhanced constraints"""
         # Extract and normalize parameters from input
         lat, lon, time, slope, aspect, atm, cloud_cover, wavelength = (
             x[:, i] for i in range(8))
@@ -89,16 +90,19 @@ class PINN(nn.Module):
 
         # Calculate cos_theta and cos_zenith using normalized inputs
         cos_theta, cos_zenith = self.cos_incidence_angle(
-            lat_norm * self.lat_scale,  # Convert back for angle calculations
+            lat_norm * self.lat_scale,
             lon_norm * self.lon_scale,
             time_norm * 24.0,
             slope_norm * self.angle_scale,
             aspect_norm * self.angle_scale
         )
 
-        # Nighttime constraint (zero irradiance when cos_zenith <= 0)
-        nighttime_mask = (cos_zenith <= 0)
-        y_pred = torch.where(nighttime_mask, torch.zeros_like(y_pred), y_pred)
+        # Nighttime penalty using soft constraint
+        nighttime_penalty = torch.where(
+            cos_zenith <= 0.001,
+            1000.0 * torch.abs(y_pred),  # Strong penalty for non-zero predictions
+            torch.zeros_like(y_pred)
+        )
 
         # Non-dimensionalized air mass calculation (Kasten-Young formula)
         air_mass = 1.0 / (cos_zenith + 1e-6)
@@ -109,32 +113,40 @@ class PINN(nn.Module):
         optical_depth = self.beta * (wavelength_star)**(-self.alpha)
         optical_depth_star = optical_depth / self.tau_ref
 
-        # Updated cloud transmission with cubic dependency
-        cloud_transmission = 1.0 - self.cloud_alpha * (cloud_cover ** 3)
+        # Simplified cloud transmission (linear model)
+        cloud_transmission = 1.0 - self.cloud_alpha * cloud_cover
 
-        # Non-dimensionalized irradiance calculation
-        irradiance_star = (torch.exp(-optical_depth_star * air_mass_star) * 
-                          cos_theta * cloud_transmission * atm_norm)
+        # Dynamic diffuse factor based on cloud cover
+        diffuse_factor = 0.3 + 0.7 * cloud_cover  # Increased scattering under cloudy conditions
 
-        # Exponential barrier functions for efficiency constraints
+        # Non-dimensionalized irradiance calculation with enhanced diffuse component
+        direct_irradiance = torch.exp(-optical_depth_star * air_mass_star) * cos_theta * cloud_transmission
+        diffuse_irradiance = diffuse_factor * direct_irradiance * (1 - cos_zenith)
+        irradiance_star = (direct_irradiance + diffuse_irradiance) * atm_norm
+
+        # Efficiency constraints with exponential barriers
         efficiency_min, efficiency_max = 0.15, 0.25
-        efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
-        efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
+        efficiency_lower = torch.exp(-100 * (y_pred/self.I0 - efficiency_min))
+        efficiency_upper = torch.exp(100 * (y_pred/self.I0 - efficiency_max))
         efficiency_penalty = efficiency_lower + efficiency_upper
 
-        # Enhanced physics residual with spatial and temporal gradients
-        physics_residual = torch.abs(y_pred - irradiance_star) + \
-                          torch.abs(torch.gradient(y_pred, dim=0)[0]) + \
-                          0.1 * torch.abs(torch.gradient(y_pred, dim=1)[0])
+        # Calculate residuals
+        physics_residual = torch.abs(y_pred/self.I0 - irradiance_star)
+        spatial_residual = torch.abs(torch.gradient(y_pred, dim=0)[0])
+        temporal_residual = 0.1 * torch.abs(torch.gradient(y_pred, dim=1)[0])
 
-        # Dynamic loss weights based on prediction confidence
+        # Dynamic weights based on residual magnitudes
         physics_weight = torch.exp(-physics_residual.mean())
-        efficiency_weight = torch.exp(-efficiency_penalty)
+        spatial_weight = torch.exp(-spatial_residual.abs().mean())
+        temporal_weight = torch.exp(-temporal_residual.abs().mean())
 
         # Total loss with dynamic weights
         total_loss = (
             physics_weight * physics_residual.mean() +
-            efficiency_weight * efficiency_penalty
+            spatial_weight * spatial_residual.mean() +
+            temporal_weight * temporal_residual.mean() +
+            0.1 * efficiency_penalty.mean() +
+            nighttime_penalty.mean()
         )
 
         return total_loss

@@ -31,10 +31,20 @@ class SolarPINN(nn.Module):
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
 
     def forward(self, x):
-        raw_output = self.net(x)
-        # Enhanced scaling for wider range predictions
-        scaled_output = torch.sigmoid(raw_output) * 0.35  # Allow up to 35% efficiency
-        return scaled_output
+        # Simple linear output without activation for wider exploration
+        return self.net(x)
+
+    def post_process(self, y_pred):
+        """Apply constraints only during visualization"""
+        # Basic physical constraints
+        y_processed = torch.clamp(y_pred, min=0.0, max=self.solar_constant)
+        
+        # Reasonable efficiency range clipping
+        efficiency_min = 0.05  # 5%
+        efficiency_max = 0.40  # 40%
+        y_processed = torch.clamp(y_processed, min=efficiency_min, max=efficiency_max)
+        
+        return y_processed
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -77,10 +87,10 @@ class SolarPINN(nn.Module):
             cos_zenith, min=0.0001)  # Avoid division by zero
 
     def calculate_optical_depth(self,
-                                wavelength,
-                                air_mass,
-                                altitude=0,
-                                cloud_cover=0):
+                               wavelength,
+                               air_mass,
+                               altitude=0,
+                               cloud_cover=0):
         """Calculate advanced multi-wavelength optical depth with cloud and altitude effects"""
         # Base optical depth using Ångström turbidity formula
         base_depth = self.beta * (wavelength /
@@ -142,9 +152,9 @@ class SolarPINN(nn.Module):
 
         # Calculate optical depth with enhanced cloud physics
         optical_depth = self.calculate_optical_depth(wavelength,
-                                                     air_mass,
-                                                     altitude=0,
-                                                     cloud_cover=cloud_cover)
+                                                    air_mass,
+                                                    altitude=0,
+                                                    cloud_cover=cloud_cover)
 
         # Enhanced cloud transmission model with altitude dependency
         base_transmission = 1.0 - self.cloud_alpha * (cloud_cover**2)
@@ -211,29 +221,22 @@ class SolarPINN(nn.Module):
         boundary_weight = 0.15
         conservation_weight = 0.15
 
-        # Expanded efficiency bounds for wider range
-        efficiency_min = 0.10  # 10%
-        efficiency_max = 0.35  # 35%
+        # More flexible efficiency bounds
+        efficiency_min = 0.05  # 5%
+        efficiency_max = 0.40  # 40%
 
-        # Exponential barrier functions for smoother gradients
+        # Reduced penalty weights for efficiency constraints
         efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
         efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
+        efficiency_penalty = (efficiency_lower + efficiency_upper) * 100.0  # Reduced from 2000.0
 
-        # Increased penalty weight for stricter enforcement (2000.0)
-        efficiency_penalty = (efficiency_lower + efficiency_upper) * 2000.0
-
-        # Additional exponential barrier terms with higher penalties (5000.0)
+        # Additional barrier terms with reduced penalties
         additional_lower_barrier = torch.exp(-200 * (y_pred - efficiency_min))
         additional_upper_barrier = torch.exp(200 * (y_pred - efficiency_max))
         efficiency_penalty += (additional_lower_barrier +
-                               additional_upper_barrier) * 5000.0
+                               additional_upper_barrier) * 200.0  # Reduced from 5000.0
 
-        # Updated clipping penalty with wider bounds
-        clipping_penalty = torch.mean(
-            torch.abs(y_pred -
-                      torch.clamp(y_pred, min=0.10, max=0.35))) * 50.0  # Reduced penalty weight
-
-        # Update total_residual calculation
+        # Update total_residual calculation (removed clipping penalty)
         total_residual = (
             spatial_weight * spatial_residual +
             temporal_weight * temporal_residual + 5.0 * physics_residual +
@@ -241,8 +244,7 @@ class SolarPINN(nn.Module):
             (torch.relu(-y_pred) + torch.relu(y_pred - self.solar_constant)) +
             conservation_weight * conservation_residual**2 +
             10.0 * nighttime_penalty +
-            efficiency_penalty +  # Increased penalty weight
-            clipping_penalty  # Add hard clipping penalty
+            efficiency_penalty  # Efficiency penalty with reduced weights
         )
 
         # Apply gradient clipping for stability
@@ -258,10 +260,10 @@ class PINNTrainer:
         self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         self.mse_loss = nn.MSELoss()
 
-        # Loss weights
-        self.w_data = 0.4  # Weight for data fitting
-        self.w_physics = 0.4  # Weight for physics constraints
-        self.w_boundary = 0.2  # Weight for boundary conditions
+        # Updated loss weights as per manager's request
+        self.w_data = 0.6  # Increased from 0.4
+        self.w_physics = 0.2  # Reduced from 0.4
+        self.w_boundary = 0.2  # Unchanged
 
     def boundary_loss(self, x_data, y_pred):
         """Compute boundary condition losses"""
@@ -292,7 +294,7 @@ class PINNTrainer:
         physics_loss = self.model.physics_loss(x_data, y_pred)
         boundary_loss = self.boundary_loss(x_data, y_pred)
 
-        # Total loss with weights
+        # Total loss with updated weights
         total_loss = (self.w_data * mse + self.w_physics * physics_loss +
                       self.w_boundary * boundary_loss)
 
@@ -300,5 +302,4 @@ class PINNTrainer:
         total_loss.backward()
         self.optimizer.step()
 
-        return total_loss.item(), mse.item(), physics_loss.item(
-        ), boundary_loss.item()
+        return total_loss.item(), mse.item(), physics_loss.item(), boundary_loss.item()

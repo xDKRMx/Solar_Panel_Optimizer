@@ -4,11 +4,8 @@ from flax import linen as nn
 from physics_equations import SolarRadiationPhysics
 
 class SolarPINN(nn.Module):
-    @nn.compact
-    def __init__(self):
-        self.physics = SolarRadiationPhysics()
-
     def setup(self):
+        self.physics = SolarRadiationPhysics()
         # Neural network architecture
         self.hidden1 = nn.Dense(64)
         self.hidden2 = nn.Dense(32)

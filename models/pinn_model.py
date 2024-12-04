@@ -5,19 +5,35 @@ import torch.nn as nn
 
 class SolarPINN(nn.Module):
 
-    def __init__(self, input_dim=8):  # Updated for cloud_cover and wavelength
+    def __init__(self, input_dim=10):  # Updated for altitude and temperature
         super(SolarPINN, self).__init__()
-        self.net = nn.Sequential(nn.Linear(input_dim, 64), nn.Tanh(),
-                                 nn.Linear(64, 128), nn.Tanh(),
-                                 nn.Linear(128, 64), nn.Tanh(),
-                                 nn.Linear(64, 1))
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 128), nn.Tanh(),
+            nn.Linear(128, 256), nn.Tanh(),
+            nn.Linear(256, 128), nn.Tanh(),
+            nn.Linear(128, 64), nn.Tanh(),
+            nn.Linear(64, 1)
+        )
+        # Solar and atmospheric constants
         self.solar_constant = 1367.0  # W/m²
         self.ref_wavelength = 0.5  # μm, reference wavelength for Ångström formula
         self.beta = 0.1  # Default aerosol optical thickness
         self.alpha = 1.3  # Default Ångström exponent
-        self.cloud_alpha = 0.85  # Empirically derived cloud transmission parameter
+        
+        # Enhanced cloud physics parameters
+        self.cloud_alpha = 0.85  # Cloud transmission parameter
+        self.cloud_scatter = 0.2  # Cloud scattering coefficient
+        self.cloud_absorption = 0.1  # Cloud absorption coefficient
+        
+        # Temperature coefficients
         self.ref_temp = 25.0  # Reference temperature (°C)
-        self.temp_coeff = 0.004  # Temperature coefficient (/°C)
+        self.temp_coeff = -0.004  # Temperature coefficient (/°C)
+        self.temp_threshold = 45.0  # Maximum operating temperature
+        
+        # Surface albedo parameters
+        self.base_albedo = 0.2  # Default ground albedo
+        self.snow_albedo = 0.8  # Snow surface albedo
+        self.water_albedo = 0.06  # Water surface albedo
 
     def forward(self, x):
         raw_output = self.net(x)
@@ -91,9 +107,9 @@ class SolarPINN(nn.Module):
         return base_depth * air_mass_factor + cloud_scatter
 
     def physics_loss(self, x, y_pred):
-        # Extract parameters from input
-        lat, lon, time, slope, aspect, atm, cloud_cover, wavelength = (
-            x[:, i] for i in range(8))
+        # Extract parameters from input including new ones
+        lat, lon, time, slope, aspect, atm, cloud_cover, wavelength, altitude, temperature = (
+            x[:, i] for i in range(10))
 
         # Calculate cos_theta and cos_zenith
         cos_theta, cos_zenith = self.cos_incidence_angle(
@@ -121,20 +137,25 @@ class SolarPINN(nn.Module):
                                    create_graph=True,
                                    retain_graph=True)[0]
 
-        # Air mass ratio calculation using Kasten and Young's formula
+        # Air mass ratio calculation using improved Kasten and Young's formula with altitude
         zenith_angle = torch.acos(cos_zenith)
         zenith_deg = torch.rad2deg(zenith_angle)
-        air_mass = 1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364))
+        base_air_mass = 1.0 / (cos_zenith + 0.50572 * (96.07995 - zenith_deg).pow(-1.6364))
+        # Altitude correction for air mass
+        pressure_ratio = torch.exp(-altitude / 7.4)  # 7.4 km scale height
+        air_mass = base_air_mass * pressure_ratio
 
-        # Calculate optical depth with enhanced cloud physics
+        # Calculate optical depth with enhanced cloud and altitude physics
         optical_depth = self.calculate_optical_depth(wavelength,
                                                    air_mass,
-                                                   altitude=0,
+                                                   altitude=altitude,
                                                    cloud_cover=cloud_cover)
 
-        # Enhanced cloud transmission model with altitude dependency
+        # Enhanced cloud transmission model with altitude and temperature dependency
         base_transmission = 1.0 - self.cloud_alpha * (cloud_cover**2)
-        diffuse_factor = 0.3 * cloud_cover * (1.0 - cos_zenith)
+        # Temperature effect on cloud formation
+        temp_factor = torch.clamp((temperature - 20) / 30, 0, 1)  # Normalized temperature effect
+        diffuse_factor = 0.3 * cloud_cover * (1.0 - cos_zenith) * (1 + 0.2 * temp_factor)
         cloud_transmission = base_transmission + diffuse_factor
 
         # Calculate second-order derivatives for energy flux conservation
@@ -143,89 +164,101 @@ class SolarPINN(nn.Module):
                                     create_graph=True,
                                     retain_graph=True)[0]
 
-        # Energy flux conservation
-        flux_divergence = y_grad2[:, 0] + y_grad2[:, 1]
+        # Enhanced energy flux conservation with temperature gradients
+        flux_divergence = y_grad2[:, 0] + y_grad2[:, 1] + 0.1 * y_grad2[:, 9]  # Include temperature
         source_term = y_grad[:, 2]
         conservation_residual = flux_divergence + source_term
 
-        # Enhanced theoretical irradiance components for full spectrum
+        # Enhanced theoretical irradiance components with temperature effects
+        # Temperature efficiency factor
+        temp_efficiency = 1.0 - self.temp_coeff * (temperature - self.ref_temp)
+        temp_efficiency = torch.clamp(temp_efficiency, 0.8, 1.0)  # Limit temperature losses
+
         direct_irradiance = (self.solar_constant * 
                            torch.exp(-optical_depth * air_mass) * 
-                           cos_theta * cloud_transmission)
+                           cos_theta * cloud_transmission * temp_efficiency)
         
-        # Enhanced diffuse radiation model
-        diffuse_factor = 0.3 + 0.7 * cloud_cover  # Increased diffuse component with clouds
+        # Enhanced diffuse radiation model with altitude effects
+        altitude_factor = torch.exp(-altitude / 15.0)  # Less diffuse at higher altitudes
+        diffuse_factor = (0.3 + 0.7 * cloud_cover) * altitude_factor
         diffuse_irradiance = (self.solar_constant * diffuse_factor * 
                             (1.0 - cloud_transmission) * cos_zenith *
-                            torch.exp(-optical_depth * air_mass * 0.5))  # Less attenuation for diffuse
+                            torch.exp(-optical_depth * air_mass * 0.5) * temp_efficiency)
         
-        # Enhanced ground reflection model
-        ground_albedo = 0.2 + 0.1 * cloud_cover  # Higher albedo under cloudy conditions
+        # Enhanced ground reflection model with surface type consideration
+        snow_condition = temperature < 0
+        water_condition = altitude < 0.01  # Near sea level
+        ground_albedo = torch.where(
+            snow_condition,
+            self.snow_albedo,
+            torch.where(
+                water_condition,
+                self.water_albedo,
+                self.base_albedo + 0.1 * cloud_cover
+            )
+        )
         reflected_irradiance = (ground_albedo * (direct_irradiance + diffuse_irradiance) * 
                               (1.0 - cos_theta) * 0.5)
 
-        # Ensure proper cos_zenith clipping and set nighttime irradiance
+        # Total theoretical irradiance with temperature and altitude effects
         cos_zenith = torch.clamp(cos_zenith, min=0.001, max=1.0)
         theoretical_irradiance = torch.where(
             cos_zenith > 0,
-            direct_irradiance + diffuse_irradiance + reflected_irradiance,
+            (direct_irradiance + diffuse_irradiance + reflected_irradiance) * temp_efficiency,
             torch.zeros_like(direct_irradiance))
 
-        # Strengthen nighttime constraint with increased penalty
-        nighttime_penalty = torch.where(
-            cos_zenith <= 0.001,
-            torch.abs(y_pred) * 1000.0,  # Increased penalty for non-zero nighttime predictions
-            torch.zeros_like(y_pred)
-        )
-
-        # Physics residuals
-        spatial_residual = y_grad[:, 0]**2 + y_grad[:, 1]**2
+        # Enhanced physics residuals with temperature consideration
+        spatial_residual = y_grad[:, 0]**2 + y_grad[:, 1]**2 + 0.1 * y_grad[:, 9]**2
         temporal_residual = y_grad[:, 2]
+        temp_residual = torch.abs(y_grad[:, 9])  # Temperature gradient penalty
 
-        # Strengthen physics-based matching
+        # Strengthen physics-based matching with temperature effects
         physics_residual = torch.where(
-            theoretical_irradiance < 1.0,  # Near-zero physics-based irradiance
-            torch.abs(y_pred) * 500.0,    # Strong penalty for non-zero predictions
+            theoretical_irradiance < 1.0,
+            torch.abs(y_pred) * 500.0,
             (y_pred - theoretical_irradiance)**2
         )
 
-        # Dynamic weighting
+        # Dynamic weighting with temperature consideration
         spatial_weight = 0.2 * torch.exp(-conservation_residual.abs().mean())
         temporal_weight = 0.2 * torch.exp(-temporal_residual.abs().mean())
+        temp_weight = 0.1 * torch.exp(-temp_residual.mean())
         boundary_weight = 0.15
         conservation_weight = 0.15
 
-        # Update efficiency bounds for expanded range
-        efficiency_min = 0.15  # 15%
-        efficiency_max = 0.25  # 25%
+        # Enhanced efficiency bounds considering temperature
+        base_efficiency_min = 0.15
+        base_efficiency_max = 0.25
+        temp_adjustment = torch.clamp(0.02 * (temperature - self.ref_temp) / 20.0, -0.02, 0.02)
+        efficiency_min = base_efficiency_min - temp_adjustment
+        efficiency_max = base_efficiency_max - temp_adjustment
         
-        # Exponential barrier functions for smoother gradients
+        # Refined efficiency penalties
         efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
         efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
-        
-        # Increased penalty weight for stricter enforcement (2000.0)
         efficiency_penalty = (efficiency_lower + efficiency_upper) * 2000.0
         
-        # Additional exponential barrier terms with higher penalties (5000.0)
+        # Additional barrier terms with temperature consideration
         additional_lower_barrier = torch.exp(-200 * (y_pred - efficiency_min))
         additional_upper_barrier = torch.exp(200 * (y_pred - efficiency_max))
         efficiency_penalty += (additional_lower_barrier + additional_upper_barrier) * 5000.0
 
-        # Update clipping penalty
+        # Enhanced clipping penalty with temperature adjustment
         clipping_penalty = torch.mean(torch.abs(
-            y_pred - torch.clamp(y_pred, min=0.15, max=0.25)
+            y_pred - torch.clamp(y_pred, min=efficiency_min, max=efficiency_max)
         )) * 100.0
 
-        # Update total_residual calculation
+        # Total residual with enhanced weighting
         total_residual = (
             spatial_weight * spatial_residual +
             temporal_weight * temporal_residual +
+            temp_weight * temp_residual +
             5.0 * physics_residual +
             boundary_weight * (torch.relu(-y_pred) + torch.relu(y_pred - self.solar_constant)) +
             conservation_weight * conservation_residual**2 +
             10.0 * nighttime_penalty +
-            efficiency_penalty +  # Increased penalty weight
-            clipping_penalty  # Add hard clipping penalty
+            efficiency_penalty +
+            clipping_penalty
         )
 
         # Apply gradient clipping for stability

@@ -18,10 +18,26 @@ class SolarPINN(nn.Module):
         self.cloud_alpha = 0.75  # Empirically derived cloud transmission parameter
         self.ref_temp = 25.0  # Reference temperature (°C)
         self.temp_coeff = 0.004  # Temperature coefficient (/°C)
+        self.efficiency_min = 0.15  # Minimum panel efficiency
+        self.efficiency_max = 0.25  # Maximum panel efficiency
+
+    def normalize_irradiance(self, irradiance):
+        """Normalize irradiance using solar constant as reference scale"""
+        return irradiance / self.solar_constant
+
+    def denormalize_irradiance(self, normalized_irradiance):
+        """Denormalize irradiance and apply efficiency bounds"""
+        irradiance = normalized_irradiance * self.solar_constant
+        # Apply efficiency bounds in post-processing
+        efficiency = torch.clamp(irradiance, min=self.efficiency_min, max=self.efficiency_max)
+        return efficiency
 
     def forward(self, x):
+        # Neural network prediction (normalized)
         raw_output = self.net(x)
-        return torch.sigmoid(raw_output)
+        normalized_output = torch.sigmoid(raw_output)  # Bound to [0,1]
+        # Denormalize and apply efficiency bounds
+        return self.denormalize_irradiance(normalized_output)
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ)"""
@@ -102,19 +118,16 @@ class SolarPINN(nn.Module):
         # Total theoretical irradiance
         theoretical_irradiance = direct_irradiance + diffuse_irradiance
 
-        # Efficiency constraints using exponential barrier functions
-        efficiency_min = 0.15
-        efficiency_max = 0.25
-        efficiency_lower_penalty = torch.exp(-100 * (y_pred - efficiency_min))
-        efficiency_upper_penalty = torch.exp(100 * (y_pred - efficiency_max))
-        efficiency_penalty = efficiency_lower_penalty + efficiency_upper_penalty
+        # Normalize predicted and theoretical values
+        y_pred_norm = self.normalize_irradiance(y_pred)
+        theoretical_norm = self.normalize_irradiance(theoretical_irradiance)
 
         # Calculate residuals
-        spatial_residual = torch.mean(torch.abs(torch.gradient(y_pred, dim=0)[0]))
-        temporal_residual = torch.mean(torch.abs(torch.gradient(y_pred, dim=1)[0]))
+        spatial_residual = torch.mean(torch.abs(torch.gradient(y_pred_norm, dim=0)[0]))
+        temporal_residual = torch.mean(torch.abs(torch.gradient(y_pred_norm, dim=1)[0]))
 
-        # Physics-based residual with relative error
-        physics_residual = torch.abs(y_pred - theoretical_irradiance) / (theoretical_irradiance + 1e-6)
+        # Physics-based residual with relative error (using normalized values)
+        physics_residual = torch.abs(y_pred_norm - theoretical_norm) / (theoretical_norm + 1e-6)
 
         # Dynamic weighting based on mean residual errors
         spatial_weight = torch.exp(-spatial_residual.abs().mean())
@@ -125,8 +138,7 @@ class SolarPINN(nn.Module):
         total_loss = (
             spatial_weight * spatial_residual +
             temporal_weight * temporal_residual +
-            physics_weight * physics_residual.mean() +
-            0.1 * efficiency_penalty  # Add efficiency penalty with small weight
+            physics_weight * physics_residual.mean()
         )
 
         return total_loss

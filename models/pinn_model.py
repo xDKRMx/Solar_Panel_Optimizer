@@ -87,41 +87,46 @@ class SolarPINN(nn.Module):
         # Calculate optical depth using simplified Ångström formula
         optical_depth = self.calculate_optical_depth(wavelength)
 
-        # Simple cloud transmission model aligned with solar_physics.py
-        cloud_transmission = 1.0 - self.cloud_alpha * (cloud_cover**3)
+        # Simplified cloud transmission model
+        cloud_transmission = 1.0 - self.cloud_alpha * cloud_cover
 
-        # Simplified irradiance calculations
+        # Calculate direct irradiance
         direct_irradiance = (self.solar_constant * 
                            torch.exp(-optical_depth * air_mass) * 
                            cos_theta * cloud_transmission * atm)
 
-        # Simplified diffuse irradiance calculation
-        diffuse_irradiance = 0.3 * direct_irradiance * (1.0 - cos_zenith)
+        # Dynamic diffuse irradiance calculation
+        diffuse_factor = 0.3 + 0.7 * cloud_cover  # Dynamic factor based on cloud cover
+        diffuse_irradiance = diffuse_factor * direct_irradiance * (1.0 - cos_zenith)
 
         # Total theoretical irradiance
         theoretical_irradiance = direct_irradiance + diffuse_irradiance
 
-        # Simple efficiency clamping (15%-25%)
-        y_pred = torch.clamp(y_pred, min=0.15, max=0.25)
+        # Efficiency constraints using exponential barrier functions
+        efficiency_min = 0.15
+        efficiency_max = 0.25
+        efficiency_lower_penalty = torch.exp(-100 * (y_pred - efficiency_min))
+        efficiency_upper_penalty = torch.exp(100 * (y_pred - efficiency_max))
+        efficiency_penalty = efficiency_lower_penalty + efficiency_upper_penalty
 
         # Calculate residuals
         spatial_residual = torch.mean(torch.abs(torch.gradient(y_pred, dim=0)[0]))
         temporal_residual = torch.mean(torch.abs(torch.gradient(y_pred, dim=1)[0]))
 
-        # Physics-based residual with simplified relative error
+        # Physics-based residual with relative error
         physics_residual = torch.abs(y_pred - theoretical_irradiance) / (theoretical_irradiance + 1e-6)
 
-        # Dynamic weighting with reduced physics weight
-        confidence = torch.exp(-physics_residual.mean())
-        spatial_weight = 0.3 * confidence
-        temporal_weight = 0.3 * confidence
-        physics_weight = 0.2  # Reduced fixed weight for physics residual
+        # Dynamic weighting based on mean residual errors
+        spatial_weight = torch.exp(-spatial_residual.abs().mean())
+        temporal_weight = torch.exp(-temporal_residual.abs().mean())
+        physics_weight = torch.exp(-physics_residual.abs().mean())
 
-        # Total loss with simplified weights
+        # Total loss with dynamic weights
         total_loss = (
             spatial_weight * spatial_residual +
             temporal_weight * temporal_residual +
-            physics_weight * physics_residual.mean()
+            physics_weight * physics_residual.mean() +
+            0.1 * efficiency_penalty  # Add efficiency penalty with small weight
         )
 
         return total_loss

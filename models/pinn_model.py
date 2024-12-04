@@ -15,6 +15,8 @@ class SolarPINN(nn.Module):
         self.I0 = 1367.0  # W/m² (solar constant)
         self.lambda_ref = 0.5  # μm (reference wavelength)
         self.T_ref = 298.15  # K (25°C reference temperature)
+        self.time_ref = 24.0  # hours
+        self.length_ref = 1000.0  # meters
         
         # Simplified physics parameters
         self.beta = 0.1  # Aerosol optical thickness
@@ -22,18 +24,31 @@ class SolarPINN(nn.Module):
         self.cloud_alpha = 0.75  # Cloud transmission parameter
 
     def forward(self, x):
-        return torch.sigmoid(self.net(x))
+        # Extract and non-dimensionalize inputs
+        lat, lon, time, slope, aspect, atm, cloud_cover, wavelength = (
+            x[:, i] for i in range(8))
+        
+        # Non-dimensionalize inputs
+        t_star = time / self.time_ref
+        lambda_star = wavelength / self.lambda_ref
+        
+        # Reconstruct non-dimensionalized input tensor
+        x_star = torch.stack([
+            lat, lon, t_star, slope, aspect, atm, cloud_cover, lambda_star
+        ], dim=1)
+        
+        return torch.sigmoid(self.net(x_star))
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ) with normalized time"""
-        t_star = time / 24.0  # Normalize time to [0, 1] for daily cycle
+        t_star = time / self.time_ref  # Normalize time to [0, 1] for daily cycle
         day_number = (t_star * 365).clamp(0, 365)
         return torch.deg2rad(23.45 * torch.sin(2 * np.pi * (284 + day_number) / 365))
 
     def hour_angle(self, time, lon):
         """Calculate hour angle (ω) with normalized time"""
-        t_star = time / 24.0  # Normalize time to [0, 1]
-        hour = (t_star * 24) % 24
+        t_star = time / self.time_ref  # Normalize time to [0, 1]
+        hour = (t_star * self.time_ref) % self.time_ref
         return torch.deg2rad(15 * (hour - 12) + lon)
 
     def cos_incidence_angle(self, lat, lon, time, slope, aspect):
@@ -67,6 +82,10 @@ class SolarPINN(nn.Module):
         lat, lon, time, slope, aspect, atm, cloud_cover, wavelength = (
             x[:, i] for i in range(8))
 
+        # Non-dimensionalize inputs
+        t_star = time / self.time_ref
+        lambda_star = wavelength / self.lambda_ref
+
         # Calculate cos_theta and cos_zenith
         cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
 
@@ -78,13 +97,12 @@ class SolarPINN(nn.Module):
         air_mass = 1.0 / (cos_zenith + 1e-6)  # Simplified from Kasten-Young formula
 
         # Non-dimensionalized and simplified calculations
-        wavelength_star = wavelength / self.lambda_ref
-        optical_depth = self.beta * (wavelength_star)**(-self.alpha)
+        optical_depth = self.beta * (lambda_star)**(-self.alpha)
         
         # Updated cloud transmission with cubic dependency
         cloud_transmission = 1.0 - self.cloud_alpha * (cloud_cover ** 3)
 
-        # Simplified irradiance calculation (non-dimensionalized)
+        # Non-dimensionalized irradiance calculation (I/I₀)
         irradiance_star = (torch.exp(-optical_depth * air_mass) * 
                           cos_theta * cloud_transmission * atm)
 
@@ -94,7 +112,7 @@ class SolarPINN(nn.Module):
         efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
         efficiency_penalty = efficiency_lower + efficiency_upper
 
-        # Enhanced physics residual calculation
+        # Enhanced physics residual calculation with non-dimensional quantities
         physics_residual = torch.abs(y_pred - irradiance_star) + \
                           torch.abs(torch.gradient(y_pred, dim=0)[0]) + \
                           0.1 * torch.abs(torch.gradient(y_pred, dim=1)[0])
@@ -111,6 +129,10 @@ class SolarPINN(nn.Module):
 
         return total_loss
 
+    def denormalize_predictions(self, y_pred_star):
+        """Convert non-dimensional predictions back to physical units"""
+        return y_pred_star * self.I0  # Scale back to W/m²
+
 
 class PINNTrainer:
 
@@ -121,11 +143,16 @@ class PINNTrainer:
 
     def train_step(self, x_data, y_data):
         self.optimizer.zero_grad()
-        y_pred = self.model(x_data)
         
-        # Compute losses
-        data_loss = self.mse_loss(y_pred, y_data)
-        physics_loss = self.model.physics_loss(x_data, y_pred)
+        # Forward pass (produces non-dimensional predictions)
+        y_pred_star = self.model(x_data)
+        
+        # Non-dimensionalize target data for comparison
+        y_data_star = y_data / self.model.I0
+        
+        # Compute losses using non-dimensional quantities
+        data_loss = self.mse_loss(y_pred_star, y_data_star)
+        physics_loss = self.model.physics_loss(x_data, y_pred_star)
         
         # Total loss with balanced weights
         total_loss = 0.5 * data_loss + 0.5 * physics_loss

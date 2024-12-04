@@ -37,7 +37,7 @@ class SolarPINN(nn.Module):
             lat, lon, t_star, slope, aspect, atm, cloud_cover, lambda_star
         ], dim=1)
         
-        return torch.sigmoid(self.net(x_star))
+        return torch.relu(self.net(x_star))
 
     def solar_declination(self, time):
         """Calculate solar declination angle (δ) with normalized time"""
@@ -89,42 +89,52 @@ class SolarPINN(nn.Module):
         # Calculate cos_theta and cos_zenith
         cos_theta, cos_zenith = self.cos_incidence_angle(lat, lon, time, slope, aspect)
 
-        # Nighttime constraint (zero irradiance when cos_zenith <= 0)
-        nighttime_mask = (cos_zenith <= 0)
+        # Nighttime constraint using simple clipping instead of exponential penalty
+        nighttime_mask = (cos_zenith <= 0.001)
         y_pred = torch.where(nighttime_mask, torch.zeros_like(y_pred), y_pred)
 
-        # Simplified air mass calculation
-        air_mass = 1.0 / (cos_zenith + 1e-6)  # Simplified from Kasten-Young formula
+        # Simplified air mass calculation (Kasten-Young formula)
+        air_mass = 1.0 / (cos_zenith + 1e-6)
 
-        # Non-dimensionalized and simplified calculations
+        # Non-dimensionalized optical depth
         optical_depth = self.beta * (lambda_star)**(-self.alpha)
         
-        # Updated cloud transmission with cubic dependency
-        cloud_transmission = 1.0 - self.cloud_alpha * (cloud_cover ** 3)
+        # Simplified cloud transmission model
+        cloud_transmission = 1.0 - self.cloud_alpha * cloud_cover
 
-        # Non-dimensionalized irradiance calculation (I/I₀)
+        # Calculate theoretical irradiance (normalized by I0)
         irradiance_star = (torch.exp(-optical_depth * air_mass) * 
                           cos_theta * cloud_transmission * atm)
 
-        # Exponential barrier functions for efficiency constraints
-        efficiency_min, efficiency_max = 0.15, 0.25
-        efficiency_lower = torch.exp(-100 * (y_pred - efficiency_min))
-        efficiency_upper = torch.exp(100 * (y_pred - efficiency_max))
-        efficiency_penalty = efficiency_lower + efficiency_upper
+        # Normalize predictions for constraint application
+        y_pred_normalized = y_pred / self.I0
+        
+        # Relaxed efficiency constraints with softer barriers
+        efficiency_min, efficiency_max = 0.10, 0.30  # Wider range
+        efficiency_lower = torch.exp(-25 * (y_pred_normalized - efficiency_min))  # Reduced exponential factor
+        efficiency_upper = torch.exp(25 * (y_pred_normalized - efficiency_max))
+        efficiency_penalty = 0.5 * (efficiency_lower + efficiency_upper)  # Reduced weight
 
-        # Enhanced physics residual calculation with non-dimensional quantities
-        physics_residual = torch.abs(y_pred - irradiance_star) + \
-                          torch.abs(torch.gradient(y_pred, dim=0)[0]) + \
-                          0.1 * torch.abs(torch.gradient(y_pred, dim=1)[0])
+        # Calculate spatial and temporal gradients (normalized)
+        spatial_grad = torch.abs(torch.gradient(y_pred_normalized, dim=0)[0])
+        temporal_grad = torch.abs(torch.gradient(y_pred_normalized, dim=1)[0])
 
-        # Dynamic loss weights
-        physics_weight = torch.exp(-physics_residual.mean())
-        efficiency_weight = torch.exp(-efficiency_penalty)
+        # Physics residual with normalized components and reduced gradient penalties
+        physics_residual = (
+            torch.abs(y_pred_normalized - irradiance_star) +
+            0.05 * spatial_grad +  # Reduced spatial gradient penalty
+            0.05 * temporal_grad   # Reduced temporal gradient penalty
+        )
 
-        # Total loss with dynamic weights
+        # Dynamic weighting based on prediction confidence
+        confidence = torch.exp(-torch.abs(y_pred_normalized - irradiance_star))
+        physics_weight = 0.5 * confidence  # Reduced base weight
+        efficiency_weight = 0.3 * (1.0 - confidence)  # Complementary weight
+
+        # Total loss with dynamic weights and normalized components
         total_loss = (
             physics_weight * physics_residual.mean() +
-            efficiency_weight * efficiency_penalty
+            efficiency_weight * efficiency_penalty.mean()
         )
 
         return total_loss

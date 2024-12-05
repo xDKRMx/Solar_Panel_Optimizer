@@ -10,9 +10,9 @@ class SolarIrradianceCalculator:
         self.boltzmann_constant = 1.381e-23  # J/K
         
         # Model parameters
-        self.beta = 0.1  # Aerosol optical thickness
-        self.alpha = 1.3  # Ångström exponent
-        self.cloud_alpha = 0.75  # Cloud transmission parameter
+        self.beta = 0.1  # Default aerosol optical thickness
+        self.alpha = 1.3  # Default Ångström exponent
+        self.cloud_alpha = 0.75  # Empirical cloud transmission parameter
         self.albedo = 0.2  # Ground reflectance
 
     def spectral_irradiance(self, wavelength, temperature):
@@ -20,6 +20,19 @@ class SolarIrradianceCalculator:
         c1 = 2 * self.planck_constant * self.speed_of_light**2
         c2 = self.planck_constant * self.speed_of_light / self.boltzmann_constant
         return c1 / (wavelength**5 * (np.exp(c2/(wavelength*temperature)) - 1))
+
+    def calculate_hour_angle(self, longitude, time):
+        """Calculate hour angle based on longitude and time"""
+        # Convert time to hour angle (15 degrees per hour from solar noon)
+        solar_noon = 12.0  # Local solar noon
+        hour_angle = 15.0 * (time - solar_noon)  # 15 degrees per hour
+        
+        # Adjust for longitude
+        # Each degree of longitude equals 4 minutes of time
+        time_offset = longitude * 4.0 / 60.0  # Convert to hours
+        hour_angle += time_offset * 15.0  # Convert time offset to degrees
+        
+        return np.radians(hour_angle)
 
     def calculate_solar_zenith(self, latitude, longitude, time):
         """Calculate solar zenith angle"""
@@ -97,6 +110,12 @@ class SolarIrradianceCalculator:
         ground_reflection = direct_normal * self.albedo * (1 - tilt_factor)
         
         return direct_tilted + diffuse_tilted + ground_reflection
+
+    def calculate_declination(self, time):
+        """Calculate solar declination angle"""
+        # Approximate solar declination using day number
+        day_number = time  # Assuming time is day number (1-365)
+        return 23.45 * np.sin(2 * np.pi * (284 + day_number) / 365)
 
     def calculate_irradiance(self, latitude, longitude, time, slope, aspect,
                            temperature=288.15, pressure=101325.0, humidity=0.5):

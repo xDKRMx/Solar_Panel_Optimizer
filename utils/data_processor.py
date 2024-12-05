@@ -9,21 +9,105 @@ class DataProcessor:
         self.earth_radius = 6371.0  # km
         self.day_period = 24.0  # hours
         self.solar_constant = 1367.0  # W/m²
+        self.extinction_coefficient = 0.1  # Atmospheric extinction coefficient
 
         # Initialize scalers
         self.length_scale = self.earth_radius
         self.time_scale = self.day_period
         self.irradiance_scale = self.solar_constant
 
-    def prepare_data(self,
-                     lat,
-                     lon,
-                     time,
-                     slope,
-                     aspect,
-                     atm,
-                     cloud_cover=None,
-                     wavelength=None):
+        # Terrain parameters
+        self.max_slope = 45.0  # Maximum terrain slope in degrees
+        self.terrain_roughness = 0.3  # Terrain roughness factor
+
+    def generate_training_data(self, n_points=1000):
+        """Generate physics-based training data for PINN"""
+        return self.generate_physics_based_data(n_points)
+
+    def generate_physics_based_data(self, n_points):
+        """Generate data points based on physical constraints"""
+        # Structured grid for spatial coordinates
+        lat_space = np.linspace(-90, 90, int(np.sqrt(n_points)))
+        lon_space = np.linspace(-180, 180, int(np.sqrt(n_points)))
+        lat_grid, lon_grid = np.meshgrid(lat_space, lon_space)
+
+        # Time sampling based on solar physics
+        time_points = self.generate_solar_time_points(n_points)
+
+        # Calculate physically meaningful parameters
+        slope = self.calculate_terrain_slope(lat_grid, lon_grid)
+        aspect = self.calculate_terrain_aspect(lat_grid, lon_grid)
+        atm_transmission = self.calculate_atmospheric_transmission(
+            lat_grid, time_points
+        )
+
+        return self.prepare_physics_data(
+            lat_grid.flatten(),
+            lon_grid.flatten(),
+            time_points,
+            slope.flatten(),
+            aspect.flatten(),
+            atm_transmission.flatten()
+        )
+
+    def calculate_atmospheric_transmission(self, lat, time):
+        """Physical atmospheric transmission model"""
+        # Air mass calculation
+        air_mass = 1 / (np.cos(np.deg2rad(lat)) + 0.50572 * 
+                    (96.07995 - lat)**(-1.6364))
+
+        # Beer-Lambert law
+        return np.exp(-self.extinction_coefficient * air_mass)
+
+    def calculate_terrain_slope(self, lat_grid, lon_grid):
+        """Calculate terrain slope based on location"""
+        # Simplified terrain model using latitude dependency
+        base_slope = self.max_slope * np.abs(lat_grid) / 90.0
+        
+        # Add terrain roughness variation
+        random_variation = np.random.normal(0, self.terrain_roughness, lat_grid.shape)
+        slope = base_slope + random_variation
+        
+        return np.clip(slope, 0, self.max_slope)
+
+    def calculate_terrain_aspect(self, lat_grid, lon_grid):
+        """Calculate terrain aspect (orientation) based on location"""
+        # Calculate aspect based on latitude and longitude gradients
+        dy = np.gradient(lat_grid, axis=0)
+        dx = np.gradient(lon_grid, axis=1)
+        
+        # Convert to compass bearing (0-360 degrees)
+        aspect = np.rad2deg(np.arctan2(dy, dx)) % 360
+        return aspect
+
+    def generate_solar_time_points(self, n_points):
+        """Generate time points optimized for solar position sampling"""
+        # Generate more samples around sunrise/sunset
+        morning = np.linspace(6, 8, n_points // 4)  # Dawn
+        day = np.linspace(8, 16, n_points // 2)     # Day
+        evening = np.linspace(16, 18, n_points // 4) # Dusk
+        
+        return np.concatenate([morning, day, evening])
+
+    def prepare_physics_data(self, lat, lon, time, slope, aspect, atm):
+        """Prepare physics-based data for PINN model"""
+        # Set default values for cloud cover and wavelength
+        cloud_cover = np.zeros_like(lat)
+        wavelength = np.full_like(lat, 0.5)  # Default wavelength in μm
+
+        # Prepare data using the existing method
+        return self.prepare_data(
+            lat=lat,
+            lon=lon,
+            time=time,
+            slope=slope,
+            aspect=aspect,
+            atm=atm,
+            cloud_cover=cloud_cover,
+            wavelength=wavelength
+        )
+
+    def prepare_data(self, lat, lon, time, slope, aspect, atm, cloud_cover=None, wavelength=None):
         """Prepare and non-dimensionalize data for PINN model"""
         # Convert to numpy arrays if not already
         lat = np.asarray(lat)
@@ -69,8 +153,7 @@ class DataProcessor:
         ])
 
         # Normalize to [-1, 1]
-        normalized = 2 * (data - ranges[:, 0]) / (ranges[:, 1] -
-                                                  ranges[:, 0]) - 1
+        normalized = 2 * (data - ranges[:, 0]) / (ranges[:, 1] - ranges[:, 0]) - 1
         return normalized
 
     def denormalize_predictions(self, predictions, scale_irradiance=True):
@@ -82,48 +165,3 @@ class DataProcessor:
             # For efficiency, apply hard clipping after sigmoid
             raw_efficiency = torch.sigmoid(predictions)
             return torch.clamp(0.15 + (0.10 * raw_efficiency), min=0.15, max=0.25)
-
-    def generate_training_data(self, n_points=1000, n_time_points=24, n_angles=30, n_atm_points=10):
-        """Generate structured grid training data for PINN"""
-        # Create structured grids for spatial coordinates
-        lat_space = np.linspace(-90, 90, int(np.sqrt(n_points)))
-        lon_space = np.linspace(-180, 180, int(np.sqrt(n_points)))
-        
-        # Create structured grids for time and angles
-        time_space = np.linspace(0, 24, n_time_points)  # Full day coverage
-        slope_space = np.linspace(0, 90, n_angles)  # Panel tilt angles
-        aspect_space = np.linspace(0, 360, n_angles)  # Panel orientation angles
-        
-        # Create structured grids for atmospheric parameters
-        atm_space = np.linspace(0.5, 1.0, n_atm_points)  # Atmospheric transmission
-        cloud_space = np.linspace(0, 1.0, n_atm_points)  # Cloud cover
-        wavelength_space = np.linspace(0.3, 1.0, n_atm_points)  # Solar spectrum
-        
-        # Create meshgrid combinations
-        lat_grid, lon_grid, time_grid, slope_grid, aspect_grid, atm_grid, cloud_grid, wavelength_grid = np.meshgrid(
-            lat_space, lon_space, time_space, slope_space, aspect_space,
-            atm_space, cloud_space, wavelength_space,
-            indexing='ij'
-        )
-        
-        # Flatten all grids to 1D arrays
-        lat = lat_grid.flatten()
-        lon = lon_grid.flatten()
-        time = time_grid.flatten()
-        slope = slope_grid.flatten()
-        aspect = aspect_grid.flatten()
-        atm = atm_grid.flatten()
-        cloud_cover = cloud_grid.flatten()
-        wavelength = wavelength_grid.flatten()
-
-        # Return prepared data with structured grid samples
-        return self.prepare_data(
-            lat=lat,
-            lon=lon,
-            time=time,
-            slope=slope,
-            aspect=aspect,
-            atm=atm,
-            cloud_cover=cloud_cover,
-            wavelength=wavelength
-        )

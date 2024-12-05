@@ -50,12 +50,12 @@ class SolarPINN(nn.Module):
         """Setup enhanced neural network architecture"""
         # Deeper architecture with residual connections and batch normalization
         self.input_layer = PhysicsInformedLayer(input_dim, 128)
-        self.in1 = nn.InstanceNorm1d(128)
+        self.in1 = nn.InstanceNorm1d(128, track_running_stats=True)
         
         self.hidden_layers = nn.ModuleList([
             nn.Sequential(
                 PhysicsInformedLayer(128, 128),
-                nn.InstanceNorm1d(128),
+                nn.InstanceNorm1d(128, track_running_stats=True),
                 nn.ReLU()
             ) for _ in range(4)  # Deeper network with 4 hidden layers
         ])
@@ -67,8 +67,8 @@ class SolarPINN(nn.Module):
         # Output layer
         self.output_layer = PhysicsInformedLayer(128, 1)  # Single output layer
         
-        # Dropout for regularization
-        self.dropout = nn.Dropout(0.2)
+        # Increased dropout for better regularization
+        self.dropout = nn.Dropout(0.3)
 
     def forward(self, x):
         # Initial layer
@@ -231,11 +231,12 @@ class SolarPINN(nn.Module):
 
 
 class PINNTrainer:
-    def __init__(self, model, learning_rate=0.001):
+    def __init__(self, model, learning_rate=0.0005):
         self.model = model
         self.optimizer = torch.optim.Adam(
             model.parameters(), 
-            lr=learning_rate
+            lr=learning_rate,
+            weight_decay=0.01  # L2 regularization
         )
 
     def train_step(self, x_data, y_data):
@@ -285,8 +286,8 @@ class PINNTrainer:
 
     def calculate_adaptive_weights(self, data_loss, physics_loss, bc_loss):
         """Calculate fixed weights as per requirements"""
-        # Fixed weights as specified
-        w1 = 0.5  # data_loss weight
-        w2 = 0.3  # physics_loss weight
-        w3 = 0.2  # bc_loss weight
+        # Fixed weights as specified for improved accuracy
+        w1 = 0.7  # data_loss weight increased
+        w2 = 0.2  # physics_loss weight reduced
+        w3 = 0.1  # bc_loss weight reduced
         return w1, w2, w3

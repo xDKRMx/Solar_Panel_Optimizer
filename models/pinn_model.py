@@ -90,7 +90,15 @@ class SolarPINN(nn.Module):
         
     def apply_physical_constraints(self, x, prediction):
         """Apply physical constraints to predictions"""
-        lat, lon, time, slope, aspect, atm, cloud, wavelength = x.split(1, dim=1)
+        # Ensure input tensor has correct shape and split it
+        components = x.split(1, dim=1)
+        if len(components) >= 8:
+            lat, lon, time, slope, aspect, atm, cloud, wavelength = components[:8]
+        else:
+            # Handle case with fewer components
+            print(f"Warning: Expected 8 components, got {len(components)}")
+            return prediction
+            
         max_possible = self.calculate_max_possible_irradiance(lat, time)
         atmospheric_attenuation = self.calculate_atmospheric_attenuation(atm, cloud)
         surface_factor = self.calculate_surface_orientation_factor(lat, lon, time, slope, aspect)

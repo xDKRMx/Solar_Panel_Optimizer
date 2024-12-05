@@ -46,6 +46,7 @@ class SolarPINN(nn.Module):
         self.albedo = 0.2  # Ground reflectance
     
     def setup_network(self, input_dim):
+        """Setup neural network architecture"""
         self.physics_net = nn.Sequential(
             PhysicsInformedLayer(input_dim, 128),
             nn.Tanh(),

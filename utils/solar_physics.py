@@ -8,6 +8,9 @@ class SolarIrradianceCalculator:
         self.planck_constant = 6.626e-34  # J·s
         self.speed_of_light = 2.998e8  # m/s
         self.boltzmann_constant = 1.381e-23  # J/K
+        self.atmospheric_extinction = 0.1  # Atmospheric extinction coefficient
+        self.earth_radius = 6371000  # Earth radius in meters
+        self.air_mass_coefficient = 1.0  # Air mass coefficient
         
         # Model parameters
         self.beta = 0.1  # Default aerosol optical thickness

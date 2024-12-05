@@ -63,8 +63,8 @@ class SolarPINN(nn.Module):
         self.solar_position_layer = PhysicsInformedLayer(128, 64)
         self.atmospheric_layer = PhysicsInformedLayer(128, 64)
         
-        # Output layers
-        self.output_layer = PhysicsInformedLayer(256, 1)  # Combined output
+        # Output layer
+        self.output_layer = PhysicsInformedLayer(128, 1)  # Single output layer
         
         # Dropout for regularization
         self.dropout = nn.Dropout(0.2)
@@ -82,15 +82,8 @@ class SolarPINN(nn.Module):
             residual = x
             x = self.dropout(x)
         
-        # Specialized physical parameter processing
-        solar_features = self.solar_position_layer(x)
-        atm_features = self.atmospheric_layer(x)
-        
-        # Combine features
-        combined_features = torch.cat([solar_features, atm_features], dim=1)
-        
         # Final prediction with physical constraints
-        prediction = self.output_layer(combined_features)
+        prediction = self.output_layer(x)
         prediction = self.apply_physical_constraints(x, prediction)
         
         return prediction

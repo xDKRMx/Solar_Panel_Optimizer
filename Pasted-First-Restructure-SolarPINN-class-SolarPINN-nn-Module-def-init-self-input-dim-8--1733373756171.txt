@@ -1,0 +1,65 @@
+First, Restructure SolarPINN:
+class SolarPINN(nn.Module):
+    def __init__(self, input_dim=8):
+        super(SolarPINN, self).__init__()
+        # Physics-informed architecture
+        self.physics_net = nn.Sequential(
+            PhysicsInformedLayer(input_dim, 128),
+            nn.Tanh(),  # Better for physics than LeakyReLU
+            PhysicsInformedLayer(128, 256),
+            nn.Tanh(),
+            PhysicsInformedLayer(256, 1)
+        )
+        
+        # Physical constants
+        self.solar_constant = 1367.0  # W/m²
+        self.stefan_boltzmann = 5.67e-8  # W/(m²⋅K⁴)
+        
+    def forward(self, x):
+        # Unpack input parameters
+        lat, lon, time, slope, aspect, atm, cloud, wavelength = x.split(1, dim=1)
+        
+        # Physics-informed forward pass
+        return self.physics_net(x)
+    def radiative_transfer_equation(self, x, I):
+        """Core PDE: Radiative Transfer Equation"""
+        # Automatic differentiation for spatial gradients
+        I_gradients = torch.autograd.grad(
+            I, x, 
+            grad_outputs=torch.ones_like(I),
+            create_graph=True
+        )[0]
+        
+        # RTE components
+        extinction = self.calculate_extinction(x)
+        emission = self.calculate_emission(x)
+        scattering = self.calculate_scattering(x, I)
+        
+        # RTE: dI/ds = -extinction*I + emission + scattering
+        rte_residual = I_gradients + extinction*I - emission - scattering
+        return rte_residual
+    def boundary_conditions(self, x):
+        """Physical boundary conditions"""
+        # Top of atmosphere condition
+        toa_condition = self.calculate_toa_condition(x)
+        
+        # Surface boundary condition
+        surface_condition = self.calculate_surface_condition(x)
+        
+        return toa_condition, surface_condition
+    def physics_loss(self, x, y_pred):
+        """Complete physics-informed loss"""
+        # PDE residual
+        rte_residual = self.radiative_transfer_equation(x, y_pred)
+        
+        # Boundary conditions
+        toa_loss, surface_loss = self.boundary_conditions(x)
+        
+        # Conservation laws
+        energy_conservation = self.check_energy_conservation(x, y_pred)
+        
+        # Combine all physics losses
+        return (torch.mean(rte_residual**2) + 
+                torch.mean(toa_loss**2) + 
+                torch.mean(surface_loss**2) + 
+                torch.mean(energy_conservation**2))

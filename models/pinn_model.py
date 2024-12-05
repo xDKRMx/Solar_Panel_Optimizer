@@ -85,9 +85,11 @@ class SolarPINN(nn.Module):
             residual = x
             x = self.dropout(x)
         
-        # Final prediction with physical constraints
+        # Final prediction with enhanced constraints
         prediction = self.output_layer(x)
-        prediction = self.apply_physical_constraints(x, prediction)
+        prediction = torch.abs(prediction)  # Ensure positive values
+        prediction = torch.clamp(prediction, min=0.0, max=self.solar_constant)  # Apply hard limits
+        prediction = self.apply_physical_constraints(x, prediction)  # Apply physics-based constraints
         
         return prediction
         
@@ -102,19 +104,26 @@ class SolarPINN(nn.Module):
             print(f"Warning: Expected 8 components, got {len(components)}")
             return prediction
             
-        max_possible = self.calculate_max_possible_irradiance(lat, time)
+        # Ensure positive predictions
+        prediction = torch.abs(prediction)
+        
+        # Calculate max possible with tighter constraints
+        max_possible = self.calculate_max_possible_irradiance(lat, time) * 0.95  # 5% safety margin
         atmospheric_attenuation = self.calculate_atmospheric_attenuation(atm, cloud)
         surface_factor = self.calculate_surface_orientation_factor(lat, lon, time, slope, aspect)
         
-        # Soft clipping using sigmoid for smooth transition
-        alpha = 10.0  # Controls the smoothness of the transition
-        soft_clip = max_possible * torch.sigmoid(alpha * (prediction / max_possible - 0.5))
+        # Enhanced soft clipping using modified sigmoid for smoother transition
+        alpha = 15.0  # Increased smoothness control
+        beta = 0.7   # Shift parameter for earlier activation
+        soft_clip = max_possible * torch.sigmoid(alpha * (prediction / max_possible - beta))
         
-        # Apply atmospheric and surface factors with soft constraints
+        # Apply atmospheric and surface factors with stricter constraints
         physically_constrained = soft_clip * \
-                               (atmospheric_attenuation * 0.9 + 0.1) * \
-                               (surface_factor * 0.9 + 0.1)  # Prevent complete zeroing
-        return physically_constrained
+                               (atmospheric_attenuation * 0.95 + 0.05) * \
+                               (surface_factor * 0.95 + 0.05)  # Stricter bounds
+        
+        # Final clipping to ensure physical bounds
+        return torch.clamp(physically_constrained, min=0.0, max=max_possible)
         
     def calculate_max_possible_irradiance(self, lat, time):
         """Calculate maximum possible irradiance based on solar position"""
@@ -289,7 +298,7 @@ class PINNTrainer:
     def calculate_adaptive_weights(self, data_loss, physics_loss, bc_loss):
         """Calculate fixed weights as per requirements"""
         # Fixed weights as specified for improved accuracy
-        w1 = 0.7  # data_loss weight increased
-        w2 = 0.2  # physics_loss weight reduced
-        w3 = 0.1  # bc_loss weight reduced
+        w1 = 0.9    # data_loss weight significantly increased
+        w2 = 0.07   # physics_loss weight further reduced
+        w3 = 0.03   # bc_loss weight further reduced
         return w1, w2, w3

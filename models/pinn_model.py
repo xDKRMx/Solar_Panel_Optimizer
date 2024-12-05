@@ -46,20 +46,53 @@ class SolarPINN(nn.Module):
         self.albedo = 0.2  # Ground reflectance
     
     def setup_network(self, input_dim):
-        """Setup neural network architecture"""
-        self.physics_net = nn.Sequential(
-            PhysicsInformedLayer(input_dim, 128),
-            nn.Tanh(),
-            PhysicsInformedLayer(128, 256),
-            nn.Tanh(),
-            PhysicsInformedLayer(256, 128),
-            nn.Tanh(),
-            PhysicsInformedLayer(128, 1)
-        )
+        """Setup enhanced neural network architecture"""
+        # Deeper architecture with residual connections and batch normalization
+        self.input_layer = PhysicsInformedLayer(input_dim, 128)
+        self.bn1 = nn.BatchNorm1d(128)
+        
+        self.hidden_layers = nn.ModuleList([
+            nn.Sequential(
+                PhysicsInformedLayer(128, 128),
+                nn.BatchNorm1d(128),
+                nn.ReLU()
+            ) for _ in range(4)  # Deeper network with 4 hidden layers
+        ])
+        
+        # Additional specialized layers for physical parameters
+        self.solar_position_layer = PhysicsInformedLayer(128, 64)
+        self.atmospheric_layer = PhysicsInformedLayer(128, 64)
+        
+        # Output layers
+        self.output_layer = PhysicsInformedLayer(256, 1)  # Combined output
+        
+        # Dropout for regularization
+        self.dropout = nn.Dropout(0.2)
 
     def forward(self, x):
-        prediction = self.physics_net(x)
+        # Initial layer
+        x = self.input_layer(x)
+        x = self.bn1(x)
+        x = F.relu(x)
+        
+        # Residual connections through hidden layers
+        residual = x
+        for layer in self.hidden_layers:
+            x = layer(x) + residual
+            residual = x
+            x = self.dropout(x)
+        
+        # Specialized physical parameter processing
+        solar_features = self.solar_position_layer(x)
+        atm_features = self.atmospheric_layer(x)
+        
+        # Combine features
+        combined_features = torch.cat([solar_features, atm_features], dim=1)
+        
+        # Final prediction with physical constraints
+        prediction = self.output_layer(combined_features)
         prediction = self.apply_physical_constraints(x, prediction)
+        
         return prediction
         
     def apply_physical_constraints(self, x, prediction):

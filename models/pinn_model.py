@@ -9,15 +9,16 @@ class PhysicsInformedLayer(nn.Module):
     def __init__(self, in_features, out_features):
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
+        # Initialize physics weights with smaller values
         self.physics_weights = nn.Parameter(
-            torch.randn(out_features)
+            torch.randn(out_features) * 0.1
         )
 
     def forward(self, x):
         # Linear transformation
         out = self.linear(x)
-        # Physics-based transformation
-        out = out * torch.sigmoid(self.physics_weights)
+        # Physics-based transformation using tanh
+        out = out * torch.tanh(self.physics_weights)
         return out
 
 
@@ -102,7 +103,15 @@ class SolarPINN(nn.Module):
         max_possible = self.calculate_max_possible_irradiance(lat, time)
         atmospheric_attenuation = self.calculate_atmospheric_attenuation(atm, cloud)
         surface_factor = self.calculate_surface_orientation_factor(lat, lon, time, slope, aspect)
-        physically_constrained = torch.min(prediction, max_possible) * atmospheric_attenuation * surface_factor
+        
+        # Soft clipping using sigmoid for smooth transition
+        alpha = 10.0  # Controls the smoothness of the transition
+        soft_clip = max_possible * torch.sigmoid(alpha * (prediction / max_possible - 0.5))
+        
+        # Apply atmospheric and surface factors with soft constraints
+        physically_constrained = soft_clip * \
+                               (atmospheric_attenuation * 0.9 + 0.1) * \
+                               (surface_factor * 0.9 + 0.1)  # Prevent complete zeroing
         return physically_constrained
         
     def calculate_max_possible_irradiance(self, lat, time):
@@ -275,11 +284,9 @@ class PINNTrainer:
         return total_loss.item()
 
     def calculate_adaptive_weights(self, data_loss, physics_loss, bc_loss):
-        # Normalize losses
-        total_magnitude = data_loss + physics_loss + bc_loss
-        if total_magnitude == 0:  #Handle the case where all losses are zero to avoid division by zero.
-            return 1/3, 1/3, 1/3
-        w1 = physics_loss / total_magnitude
-        w2 = data_loss / total_magnitude
-        w3 = bc_loss / total_magnitude
+        """Calculate fixed weights as per requirements"""
+        # Fixed weights as specified
+        w1 = 0.5  # data_loss weight
+        w2 = 0.3  # physics_loss weight
+        w3 = 0.2  # bc_loss weight
         return w1, w2, w3

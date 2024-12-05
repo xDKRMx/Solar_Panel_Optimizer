@@ -107,10 +107,16 @@ class SolarPINN(nn.Module):
         # Ensure positive predictions
         prediction = torch.abs(prediction)
         
-        # Calculate max possible with tighter constraints
+        # Calculate max possible with tighter constraints and expand dimensions
         max_possible = self.calculate_max_possible_irradiance(lat, time) * 0.95  # 5% safety margin
+        max_possible = max_possible.expand_as(prediction)
+        
+        # Calculate and expand atmospheric and surface factors
         atmospheric_attenuation = self.calculate_atmospheric_attenuation(atm, cloud)
+        atmospheric_attenuation = atmospheric_attenuation.expand_as(prediction)
+        
         surface_factor = self.calculate_surface_orientation_factor(lat, lon, time, slope, aspect)
+        surface_factor = surface_factor.expand_as(prediction)
         
         # Enhanced soft clipping using modified sigmoid for smoother transition
         alpha = 15.0  # Increased smoothness control
@@ -122,8 +128,8 @@ class SolarPINN(nn.Module):
                                (atmospheric_attenuation * 0.95 + 0.05) * \
                                (surface_factor * 0.95 + 0.05)  # Stricter bounds
         
-        # Final clipping to ensure physical bounds
-        return torch.clamp(physically_constrained, min=0.0, max=max_possible)
+        # Final clipping with scalar min value and tensor max value
+        return torch.clamp(physically_constrained, min=0.0, max=max_possible.item())
         
     def calculate_max_possible_irradiance(self, lat, time):
         """Calculate maximum possible irradiance based on solar position"""

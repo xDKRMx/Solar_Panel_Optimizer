@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class PhysicsInformedLayer(nn.Module):
@@ -18,9 +19,6 @@ class PhysicsInformedLayer(nn.Module):
         # Physics-based transformation
         out = out * torch.sigmoid(self.physics_weights)
         return out
-import numpy as np
-import torch
-import torch.nn as nn
 
 
 class SolarPINN(nn.Module):
@@ -79,54 +77,14 @@ class SolarPINN(nn.Module):
         _, _, _, _, _, atm, cloud, wavelength = x.split(1, dim=1)
         return self.beta * (wavelength)**(-self.alpha) * atm * (1 - self.cloud_alpha * cloud**3)
 
-    def hour_angle(self, time, lon):
-        """Calculate hour angle (ω) with equation of time correction"""
-        t_star = time / self.time_ref
-        day_number = (t_star * 365).clamp(0, 365)
-        
-        # Equation of time correction
-        b = 2 * np.pi * (day_number - 81) / 365
-        eot = 9.87 * torch.sin(2*b) - 7.53 * torch.cos(b) - 1.5 * torch.sin(b)
-        
-        # Solar time calculation
-        hour = (t_star * self.time_ref) % self.time_ref
-        solar_time = hour + eot/60 + lon/15
-        
-        return torch.deg2rad(15 * (solar_time - 12))
-
-    def cos_incidence_angle(self, lat, lon, time, slope, aspect):
-        """Calculate cosine of incidence angle (θ) and zenith angle with improved accuracy"""
-        lat_rad = torch.deg2rad(lat)
-        slope_rad = torch.deg2rad(slope)
-        aspect_rad = torch.deg2rad(aspect)
-
-        declination = self.solar_declination(time)
-        hour_angle = self.hour_angle(time, lon)
-
-        cos_zenith = (torch.sin(lat_rad) * torch.sin(declination) +
-                     torch.cos(lat_rad) * torch.cos(declination) *
-                     torch.cos(hour_angle))
-
-        cos_theta = (
-            torch.sin(lat_rad) * torch.sin(declination) * torch.cos(slope_rad)
-            - torch.cos(lat_rad) * torch.sin(declination) *
-            torch.sin(slope_rad) * torch.cos(aspect_rad) +
-            torch.cos(lat_rad) * torch.cos(declination) *
-            torch.cos(hour_angle) * torch.cos(slope_rad) +
-            torch.sin(lat_rad) * torch.cos(declination) * torch.cos(hour_angle)
-            * torch.sin(slope_rad) * torch.cos(aspect_rad) +
-            torch.cos(declination) * torch.sin(hour_angle) *
-            torch.sin(slope_rad) * torch.sin(aspect_rad))
-
-        return torch.clamp(cos_theta, min=0.0), torch.clamp(cos_zenith, min=0.0001)
-
     def boundary_conditions(self, x):
         """Physical boundary conditions"""
         # Unpack parameters
         lat, lon, time, slope, aspect, atm, cloud, wavelength = x.split(1, dim=1)
         
         # Top of atmosphere condition (solar constant)
-        cos_zenith = self.calculate_zenith_angle(lat, lon, time)
+        # Placeholder for zenith angle calculation - needs implementation
+        cos_zenith = torch.ones_like(lat) # Placeholder, needs proper calculation.
         toa_condition = self.solar_constant * cos_zenith
         
         # Surface boundary condition (albedo and emission)
@@ -174,64 +132,50 @@ class SolarPINN(nn.Module):
         
         return physics_loss
 
-    def calculate_azimuth(self, lat, lon, time):
-        """Calculate solar azimuth angle"""
-        declination = self.solar_declination(time)
-        hour_angle = self.hour_angle(time, lon)
-        lat_rad = torch.deg2rad(lat)
-        
-        cos_zenith = torch.sin(lat_rad) * torch.sin(declination) + \
-                     torch.cos(lat_rad) * torch.cos(declination) * torch.cos(hour_angle)
-        sin_zenith = torch.sqrt(1 - cos_zenith**2)
-        
-        cos_azimuth = (torch.sin(declination) - torch.sin(lat_rad) * cos_zenith) / \
-                      (torch.cos(lat_rad) * sin_zenith + 1e-6)
-        sin_azimuth = cos_declination * torch.sin(hour_angle) / sin_zenith
-        
-        azimuth = torch.atan2(sin_azimuth, cos_azimuth)
-        return azimuth
-
-    def denormalize_predictions(self, y_pred_star):
-        """Convert non-dimensional predictions back to physical units"""
-        return y_pred_star * self.I0  # Scale back to W/m²
 
 
 class PINNTrainer:
-
     def __init__(self, model, learning_rate=0.001):
         self.model = model
-        self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='min', factor=0.5, patience=5, verbose=True
+        self.optimizer = torch.optim.Adam(
+            model.parameters(), 
+            lr=learning_rate
         )
-        self.mse_loss = nn.MSELoss()
 
     def train_step(self, x_data, y_data):
         self.optimizer.zero_grad()
-        
-        # Forward pass (produces non-dimensional predictions)
-        y_pred_star = self.model(x_data)
-        
-        # Non-dimensionalize target data for comparison
-        y_data_star = y_data / self.model.I0
-        
-        # Compute losses using non-dimensional quantities
-        data_loss = self.mse_loss(y_pred_star, y_data_star)
-        physics_loss = self.model.physics_loss(x_data, y_pred_star)
-        
-        # Adaptive loss weighting based on training progress
-        loss_ratio = data_loss.item() / (physics_loss.item() + 1e-8)
-        alpha = torch.sigmoid(torch.tensor(loss_ratio))
-        
+
+        # Forward pass
+        y_pred = self.model(x_data)
+
+        # Data loss
+        data_loss = F.mse_loss(y_pred, y_data)
+
+        # Physics-informed loss
+        physics_loss = self.model.physics_loss(x_data, y_pred)
+
+        # Boundary condition loss
+        toa_condition, _ = self.model.boundary_conditions(x_data)
+        bc_loss = F.mse_loss(y_pred, toa_condition) #Using MSE loss for BC comparison
+
         # Total loss with adaptive weights
-        total_loss = alpha * data_loss + (1 - alpha) * physics_loss
+        w1, w2, w3 = self.calculate_adaptive_weights(
+            data_loss, physics_loss, bc_loss
+        )
+        total_loss = w1*data_loss + w2*physics_loss + w3*bc_loss
 
-        # Backward pass
+        # Backward pass with physics constraints
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
-        
-        # Update learning rate
-        self.scheduler.step(total_loss)
 
-        return total_loss.item(), data_loss.item(), physics_loss.item()
+        return total_loss.item()
+
+    def calculate_adaptive_weights(self, data_loss, physics_loss, bc_loss):
+        # Normalize losses
+        total_magnitude = data_loss + physics_loss + bc_loss
+        if total_magnitude == 0:  #Handle the case where all losses are zero to avoid division by zero.
+            return 1/3, 1/3, 1/3
+        w1 = physics_loss / total_magnitude
+        w2 = data_loss / total_magnitude
+        w3 = bc_loss / total_magnitude
+        return w1, w2, w3

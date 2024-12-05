@@ -1,9 +1,9 @@
 import torch
 import numpy as np
-from solar_pinn import SolarPINN
+from solar_pinn import SolarPINN, PINNTrainer
 
 def generate_training_data(n_samples=1000):
-    """Generate synthetic training data for ideal clear sky conditions"""
+    """Generate synthetic training data for ideal clear sky conditions."""
     # Random sampling of essential input parameters
     latitude = torch.rand(n_samples) * 180 - 90  # -90 to 90 degrees
     time = torch.rand(n_samples) * 24  # 0 to 24 hours
@@ -13,10 +13,9 @@ def generate_training_data(n_samples=1000):
     return latitude, time, day_of_year, slope
 
 def main():
-    # Create model
+    # Create model and trainer
     model = SolarPINN()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
+    trainer = PINNTrainer(model)
     
     # Generate training data
     latitude, time, day_of_year, slope = generate_training_data()
@@ -30,33 +29,30 @@ def main():
     print("Starting training...")
     
     for epoch in range(n_epochs):
-        model.train()
-        optimizer.zero_grad()
-        
-        # Forward pass with physics constraints
-        pred_irradiance = model(latitude, time, day_of_year, slope)
-        
-        # Calculate theoretical clear-sky irradiance for training
+        # Calculate theoretical clear-sky irradiance for training targets
         declination = model.calculate_declination(day_of_year)
         hour_angle = model.calculate_hour_angle(time)
-        target_irradiance = model.calculate_toa_irradiance(latitude, declination, hour_angle)
+        zenith_angle = model.calculate_zenith_angle(latitude, declination, hour_angle)
+        
+        # Create target values (simplified clear sky model)
+        cos_zenith = torch.cos(zenith_angle)
+        target_irradiance = model.solar_constant * torch.clamp(cos_zenith, 0, 1)
         target_irradiance = target_irradiance.reshape(-1, 1)
         
-        # Compute physics-informed loss
-        loss = model.compute_loss(pred_irradiance, target_irradiance, latitude, time, day_of_year)
+        # Create input tensor
+        x_data = torch.stack([latitude, time, day_of_year, slope], dim=1)
         
-        # Backward pass and optimization
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
-        
-        # Learning rate scheduling
-        scheduler.step(loss)
+        # Training step
+        x_data = torch.stack([latitude, time, day_of_year, slope], dim=1).float()
+        target_irradiance = target_irradiance.float()
+        loss = trainer.train_step(x_data, target_irradiance)
         
         # Early stopping check
-        if loss.item() < best_loss:
-            best_loss = loss.item()
+        if loss < best_loss:
+            best_loss = loss
             patience_counter = 0
+            # Save best model
+            torch.save(model.state_dict(), 'best_solar_pinn.pth')
         else:
             patience_counter += 1
             
@@ -65,12 +61,9 @@ def main():
             break
             
         if (epoch + 1) % 10 == 0:
-            print(f"Epoch [{epoch+1}/{n_epochs}], Loss: {loss.item():.4f}, Best Loss: {best_loss:.4f}")
+            print(f"Epoch [{epoch+1}/{n_epochs}], Loss: {loss:.4f}, Best Loss: {best_loss:.4f}")
     
     print("Training completed!")
-    
-    # Save the trained model
-    torch.save(model.state_dict(), 'solar_pinn_model.pth')
 
 if __name__ == "__main__":
     main()

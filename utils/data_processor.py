@@ -165,3 +165,16 @@ class DataProcessor:
             # For efficiency, apply hard clipping after sigmoid
             raw_efficiency = torch.sigmoid(predictions)
             return torch.clamp(0.15 + (0.10 * raw_efficiency), min=0.15, max=0.25)
+            
+    def prepare_spectral_data(self, x):
+        """Add spectral components to the input data"""
+        wavelength = x.split(1, dim=1)[-1]
+        # Physical constants
+        h = 6.626e-34  # Planck constant
+        c = 2.998e8    # Speed of light
+        k = 1.381e-23  # Boltzmann constant
+        T = 5778       # Solar surface temperature
+        
+        spectral_irradiance = (2*h*c*c)/(wavelength**5) * \
+            1/(torch.exp(h*c/(wavelength*k*T)) - 1)
+        return spectral_irradiance

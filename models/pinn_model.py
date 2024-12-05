@@ -109,19 +109,13 @@ class SolarPINN(nn.Module):
     
     def radiative_transfer_equation(self, x, I):
         """Core PDE: Radiative Transfer Equation"""
-        # Automatic differentiation for spatial gradients
-        I_gradients = torch.autograd.grad(
-            I, x, 
-            grad_outputs=torch.ones_like(I),
-            create_graph=True
-        )[0]
-        
-        # RTE components
+        # Get gradients
+        I_gradients = torch.autograd.grad(I, x, create_graph=True)[0]
         extinction = self.calculate_extinction(x)
         emission = self.calculate_emission(x)
         scattering = self.calculate_scattering(x, I)
         
-        # RTE: dI/ds = -extinction*I + emission + scattering
+        # Complete RTE equation
         rte_residual = I_gradients + extinction*I - emission - scattering
         return rte_residual
     
@@ -132,20 +126,15 @@ class SolarPINN(nn.Module):
 
     def boundary_conditions(self, x):
         """Physical boundary conditions"""
-        # Unpack parameters
         lat, lon, time, slope, aspect, atm, cloud, wavelength = x.split(1, dim=1)
-        
-        # Top of atmosphere condition (solar constant)
-        # Placeholder for zenith angle calculation - needs implementation
-        cos_zenith = torch.ones_like(lat) # Placeholder, needs proper calculation.
-        toa_condition = self.solar_constant * cos_zenith
-        
-        # Surface boundary condition (albedo and emission)
-        surface_temp = 288.15  # Standard surface temperature (K)
-        surface_emission = self.stefan_boltzmann * (surface_temp**4)
-        surface_reflection = self.albedo * toa_condition
-        surface_condition = surface_reflection + surface_emission
-        
+        # Top of atmosphere condition
+        toa_condition = self.solar_constant * self.calculate_zenith_factor(lat, time)
+        # Surface condition with all components
+        surface_condition = (
+            self.calculate_surface_emission(x) +
+            self.calculate_surface_reflection(x) +
+            self.calculate_diffuse_radiation(x)
+        )
         return toa_condition, surface_condition
     
     def check_energy_conservation(self, x, y_pred):
@@ -166,24 +155,35 @@ class SolarPINN(nn.Module):
     
     def physics_loss(self, x, y_pred):
         """Complete physics-informed loss"""
-        # PDE residual
-        rte_residual = self.radiative_transfer_equation(x, y_pred)
+        # RTE loss
+        rte_loss = self.radiative_transfer_equation(x, y_pred)
         
         # Boundary conditions
-        toa_condition, surface_condition = self.boundary_conditions(x)
+        boundary_loss = self.boundary_conditions(x)
         
         # Conservation laws
-        energy_conservation = self.check_energy_conservation(x, y_pred)
+        conservation_loss = self.energy_conservation(x, y_pred)
         
-        # Combine all physics losses with weights
-        physics_loss = (
-            torch.mean(rte_residual**2) + 
-            torch.mean((y_pred - toa_condition)**2) + 
-            torch.mean((y_pred - surface_condition)**2) + 
-            torch.mean(energy_conservation**2)
-        )
+        # Spectral constraints
+        spectral_loss = self.spectral_constraints(x, y_pred)
         
-        return physics_loss
+        # Combined physics loss
+        return (rte_loss + boundary_loss + 
+                conservation_loss + spectral_loss)
+                
+    def spectral_constraints(self, x, y_pred):
+        """Apply spectral physics constraints"""
+        wavelength = x.split(1, dim=1)[-1]
+        spectral_data = self.data_processor.prepare_spectral_data(x)
+        return torch.mean((y_pred - spectral_data)**2)
+        
+    def energy_conservation(self, x, y_pred):
+        """Energy conservation constraint"""
+        incoming = self.calculate_incoming_radiation(x)
+        outgoing = self.calculate_outgoing_radiation(x, y_pred)
+        absorbed = self.calculate_absorbed_radiation(x, y_pred)
+        
+        return torch.mean(torch.abs(incoming - (outgoing + absorbed)))
 
 
 
@@ -221,6 +221,23 @@ class PINNTrainer:
         total_loss.backward()
         self.optimizer.step()
 
+    def calculate_incoming_radiation(self, x):
+        """Calculate incoming solar radiation"""
+        lat, _, time, _, _, atm, cloud, _ = x.split(1, dim=1)
+        zenith_factor = self.calculate_zenith_factor(lat, time)
+        atmospheric_attenuation = self.calculate_atmospheric_attenuation(atm, cloud)
+        return self.solar_constant * zenith_factor * atmospheric_attenuation
+    
+    def calculate_outgoing_radiation(self, x, y_pred):
+        """Calculate outgoing radiation"""
+        # Consider both reflection and emission
+        surface_reflection = self.albedo * y_pred
+        surface_emission = self.calculate_emission(x)
+        return surface_reflection + surface_emission
+    
+    def calculate_absorbed_radiation(self, x, y_pred):
+        """Calculate absorbed radiation"""
+        return (1 - self.albedo) * y_pred
         return total_loss.item()
 
     def calculate_adaptive_weights(self, data_loss, physics_loss, bc_loss):

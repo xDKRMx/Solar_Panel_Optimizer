@@ -9,16 +9,15 @@ class PhysicsInformedLayer(nn.Module):
     def __init__(self, in_features, out_features):
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
-        # Initialize physics weights with smaller values
         self.physics_weights = nn.Parameter(
-            torch.randn(out_features) * 0.1
+            torch.randn(out_features)
         )
 
     def forward(self, x):
         # Linear transformation
         out = self.linear(x)
-        # Physics-based transformation using tanh
-        out = out * torch.tanh(self.physics_weights)
+        # Physics-based transformation
+        out = out * torch.sigmoid(self.physics_weights)
         return out
 
 
@@ -47,89 +46,30 @@ class SolarPINN(nn.Module):
         self.albedo = 0.2  # Ground reflectance
     
     def setup_network(self, input_dim):
-        """Setup enhanced neural network architecture"""
-        # Deeper architecture with residual connections and batch normalization
-        self.input_layer = PhysicsInformedLayer(input_dim, 128)
-        self.in1 = nn.InstanceNorm1d(1, track_running_stats=False)
-        
-        self.hidden_layers = nn.ModuleList([
-            nn.Sequential(
-                PhysicsInformedLayer(128, 128),
-                nn.InstanceNorm1d(1, track_running_stats=False),
-                nn.ReLU()
-            ) for _ in range(4)  # Deeper network with 4 hidden layers
-        ])
-        
-        # Additional specialized layers for physical parameters
-        self.solar_position_layer = PhysicsInformedLayer(128, 64)
-        self.atmospheric_layer = PhysicsInformedLayer(128, 64)
-        
-        # Output layer
-        self.output_layer = PhysicsInformedLayer(128, 1)  # Single output layer
-        
-        # Increased dropout for better regularization
-        self.dropout = nn.Dropout(0.3)
+        """Setup neural network architecture"""
+        self.physics_net = nn.Sequential(
+            PhysicsInformedLayer(input_dim, 128),
+            nn.Tanh(),
+            PhysicsInformedLayer(128, 256),
+            nn.Tanh(),
+            PhysicsInformedLayer(256, 128),
+            nn.Tanh(),
+            PhysicsInformedLayer(128, 1)
+        )
 
     def forward(self, x):
-        # Initial layer
-        x = self.input_layer(x)
-        # Handle input dimensions for InstanceNorm1d
-        x = x.unsqueeze(0) if x.dim() == 1 else x
-        x = self.in1(x)
-        x = F.relu(x)
-        
-        # Residual connections through hidden layers
-        residual = x
-        for layer in self.hidden_layers:
-            x = layer(x) + residual
-            residual = x
-            x = self.dropout(x)
-        
-        # Final prediction with enhanced constraints
-        prediction = self.output_layer(x)
-        prediction = torch.abs(prediction)  # Ensure positive values
-        prediction = torch.clamp(prediction, min=0.0, max=self.solar_constant)  # Apply hard limits
-        prediction = self.apply_physical_constraints(x, prediction)  # Apply physics-based constraints
-        
+        prediction = self.physics_net(x)
+        prediction = self.apply_physical_constraints(x, prediction)
         return prediction
         
     def apply_physical_constraints(self, x, prediction):
         """Apply physical constraints to predictions"""
-        # Ensure input tensor has correct shape and split it
-        components = x.split(1, dim=1)
-        if len(components) >= 8:
-            lat, lon, time, slope, aspect, atm, cloud, wavelength = components[:8]
-        else:
-            # Handle case with fewer components
-            print(f"Warning: Expected 8 components, got {len(components)}")
-            return prediction
-            
-        # Ensure positive predictions
-        prediction = torch.abs(prediction)
-        
-        # Calculate max possible with tighter constraints and expand dimensions
-        max_possible = self.calculate_max_possible_irradiance(lat, time) * 0.95  # 5% safety margin
-        max_possible = max_possible.expand_as(prediction)
-        
-        # Calculate and expand atmospheric and surface factors
+        lat, lon, time, slope, aspect, atm, cloud, wavelength = x.split(1, dim=1)
+        max_possible = self.calculate_max_possible_irradiance(lat, time)
         atmospheric_attenuation = self.calculate_atmospheric_attenuation(atm, cloud)
-        atmospheric_attenuation = atmospheric_attenuation.expand_as(prediction)
-        
         surface_factor = self.calculate_surface_orientation_factor(lat, lon, time, slope, aspect)
-        surface_factor = surface_factor.expand_as(prediction)
-        
-        # Enhanced soft clipping using modified sigmoid for smoother transition
-        alpha = 15.0  # Increased smoothness control
-        beta = 0.7   # Shift parameter for earlier activation
-        soft_clip = max_possible * torch.sigmoid(alpha * (prediction / max_possible - beta))
-        
-        # Apply atmospheric and surface factors with stricter constraints
-        physically_constrained = soft_clip * \
-                               (atmospheric_attenuation * 0.95 + 0.05) * \
-                               (surface_factor * 0.95 + 0.05)  # Stricter bounds
-        
-        # Final clipping with scalar min value and tensor max value
-        return torch.clamp(physically_constrained, min=0.0, max=max_possible.item())
+        physically_constrained = torch.min(prediction, max_possible) * atmospheric_attenuation * surface_factor
+        return physically_constrained
         
     def calculate_max_possible_irradiance(self, lat, time):
         """Calculate maximum possible irradiance based on solar position"""
@@ -248,12 +188,11 @@ class SolarPINN(nn.Module):
 
 
 class PINNTrainer:
-    def __init__(self, model, learning_rate=0.0005):
+    def __init__(self, model, learning_rate=0.001):
         self.model = model
         self.optimizer = torch.optim.Adam(
             model.parameters(), 
-            lr=learning_rate,
-            weight_decay=0.01  # L2 regularization
+            lr=learning_rate
         )
 
     def train_step(self, x_data, y_data):
@@ -302,9 +241,11 @@ class PINNTrainer:
         return total_loss.item()
 
     def calculate_adaptive_weights(self, data_loss, physics_loss, bc_loss):
-        """Calculate fixed weights as per requirements"""
-        # Fixed weights as specified for improved accuracy
-        w1 = 0.9    # data_loss weight significantly increased
-        w2 = 0.07   # physics_loss weight further reduced
-        w3 = 0.03   # bc_loss weight further reduced
+        # Normalize losses
+        total_magnitude = data_loss + physics_loss + bc_loss
+        if total_magnitude == 0:  #Handle the case where all losses are zero to avoid division by zero.
+            return 1/3, 1/3, 1/3
+        w1 = physics_loss / total_magnitude
+        w2 = data_loss / total_magnitude
+        w3 = bc_loss / total_magnitude
         return w1, w2, w3

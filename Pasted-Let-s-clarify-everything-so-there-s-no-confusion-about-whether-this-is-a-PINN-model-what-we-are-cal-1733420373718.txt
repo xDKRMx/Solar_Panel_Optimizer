@@ -1,0 +1,289 @@
+Let’s clarify everything so there’s no confusion about whether this is a PINN model, what we are calculating, and how these 6 equations relate to the problem.
+
+1. Is This a PINN Model?
+Yes, but it's not a traditional PDE-driven PINN.
+PINNs (Physics-Informed Neural Networks) are neural networks trained with physics-based constraints. These constraints can come from:
+Partial Differential Equations (PDEs), or
+Ordinary Differential Equations (ODEs), algebraic equations, or physical laws.
+In your case:
+
+The problem is not directly governed by PDEs like elasticity or fluid dynamics. Instead, the governing equations are algebraic and analytical formulations (e.g., air mass, zenith angle, irradiance).
+This means the PDE residual term is not based on gradients of the predicted values (e.g., 
+∇
+𝐼
+∇I).
+However, your model is still a PINN because you are enforcing physics-based constraints (e.g., comparing predictions with physical irradiance values).
+2. What Are We Solving in Ideal Conditions?
+In ideal conditions, the goal is to:
+
+Train a neural network model to predict solar irradiance as a function of inputs (
+latitude
+,
+longitude
+,
+time
+latitude,longitude,time).
+Ensure that the predictions are consistent with the 6 governing equations:
+Zenith angle (
+cos
+⁡
+(
+𝜃
+𝑧
+)
+cos(θ 
+z
+​
+ )),
+Air mass (
+𝑀
+M),
+Atmospheric transmission (
+𝑇
+T),
+Cloud effects (removed for ideal conditions),
+Terrain effects (slope and aspect),
+Spectral irradiance (Planck’s law).
+Use these predictions to optimize the solar panel setup (e.g., slope and aspect).
+What Will We Calculate?
+The physical irradiance (
+𝐼
+physical
+I 
+physical
+​
+ ) using the 6 equations and:
+Inputs like latitude, longitude, time.
+Idealized or universal coefficients.
+Compare the model’s predicted irradiance (
+𝐼
+predicted
+I 
+predicted
+​
+ ) with 
+𝐼
+physical
+I 
+physical
+​
+ .
+3. How Is This PINN Model Trained?
+Here’s how the PINN model works:
+
+Inputs to the Model:
+Latitude (
+𝜙
+ϕ), longitude (
+𝜆
+λ), time (
+𝑡
+t).
+Model Prediction:
+The neural network predicts 
+𝐼
+predicted
+I 
+predicted
+​
+ , the irradiance at those inputs.
+Physics-Informed Residual:
+The residual is the difference between 
+𝐼
+predicted
+I 
+predicted
+​
+  and 
+𝐼
+physical
+I 
+physical
+​
+  (calculated using the 6 equations):
+Residual
+=
+(
+𝐼
+predicted
+−
+𝐼
+physical
+)
+2
+Residual=(I 
+predicted
+​
+ −I 
+physical
+​
+ ) 
+2
+ 
+This residual enforces consistency between the model and the governing equations.
+Loss Function:
+The total loss is based on the residual plus optional boundary/initial conditions or regularization terms.
+4. If Gradients Are Not Used, Is It Still a PINN?
+Yes, because:
+
+Physics-based constraints are still used.
+Traditional PDEs require gradients because their physics is described by spatial/temporal derivatives. In your case, the physics is described by algebraic equations, so gradients are not needed.
+The physics constraints are still directly tied to the inputs and outputs of the model.
+5. Steps in Ideal Conditions
+Let’s outline the process for your ideal conditions:
+
+Step 1: Inputs to the Model
+Latitude (
+𝜙
+ϕ), longitude (
+𝜆
+λ), time (
+𝑡
+t).
+Step 2: Physical Governing Equations
+Calculate 
+𝐼
+physical
+I 
+physical
+​
+  using:
+
+Zenith angle (
+cos
+⁡
+(
+𝜃
+𝑧
+)
+cos(θ 
+z
+​
+ )):
+Depends on latitude, time, and declination angle.
+Air mass (
+𝑀
+M):
+Depends on zenith angle.
+Atmospheric transmission (
+𝑇
+T):
+Depends on air mass and extinction coefficient (
+𝜏
+τ).
+Terrain effects (slope and aspect):
+Use user-defined panel slope/aspect for optimizing 
+cos
+⁡
+(
+incidence
+)
+cos(incidence).
+Spectral irradiance (optional):
+If included, integrate over wavelengths for additional accuracy.
+Step 3: Model Predictions
+The neural network predicts 
+𝐼
+predicted
+I 
+predicted
+​
+  for given inputs (
+𝜙
+,
+𝜆
+,
+𝑡
+ϕ,λ,t).
+Step 4: Residual Calculation
+Compare 
+𝐼
+predicted
+I 
+predicted
+​
+  with 
+𝐼
+physical
+I 
+physical
+​
+ :
+Residual
+=
+(
+𝐼
+predicted
+−
+𝐼
+physical
+)
+2
+Residual=(I 
+predicted
+​
+ −I 
+physical
+​
+ ) 
+2
+ 
+Step 5: Loss Function
+Total loss is the residual plus optional boundary/initial conditions or regularization terms.
+6. Radiative Transfer Equation (RTE)
+The Radiative Transfer Equation (RTE) is a complex PDE that models how light propagates through a medium. It is generally used for:
+
+Real-world scenarios involving scattering, absorption, and reflection of light.
+Detailed atmospheric models for cloud cover, aerosols, etc.
+In Ideal Conditions:
+The RTE is not necessary because:
+Cloud effects are ignored.
+Atmospheric transmission is simplified to an exponential decay model.
+The simpler algebraic formulations are sufficient to model solar irradiance under ideal conditions.
+7. What to Calculate in Ideal Conditions?
+Irradiance at the top of the atmosphere (
+𝐼
+max
+I 
+max
+​
+ ):
+Based on latitude, longitude, and time.
+Atmospheric transmission (
+𝑇
+T):
+Simplified exponential decay.
+Panel alignment effects:
+cos
+⁡
+(
+incidence
+)
+cos(incidence) for slope and aspect optimization.
+8. Summary: Necessary Steps in PINN
+Formulations:
+Use the 6 equations to compute 
+𝐼
+physical
+I 
+physical
+​
+ .
+PDE Residual:
+Compare 
+𝐼
+predicted
+I 
+predicted
+​
+  with 
+𝐼
+physical
+I 
+physical
+​
+ .
+Loss Function:
+Enforce physical consistency through residuals.
+Gradients:
+Not needed for residuals but still required for training the model.

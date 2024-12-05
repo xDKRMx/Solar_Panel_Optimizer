@@ -50,12 +50,12 @@ class SolarPINN(nn.Module):
         """Setup enhanced neural network architecture"""
         # Deeper architecture with residual connections and batch normalization
         self.input_layer = PhysicsInformedLayer(input_dim, 128)
-        self.in1 = nn.InstanceNorm1d(128, track_running_stats=True)
+        self.in1 = nn.InstanceNorm1d(1, track_running_stats=False)
         
         self.hidden_layers = nn.ModuleList([
             nn.Sequential(
                 PhysicsInformedLayer(128, 128),
-                nn.InstanceNorm1d(128, track_running_stats=True),
+                nn.InstanceNorm1d(1, track_running_stats=False),
                 nn.ReLU()
             ) for _ in range(4)  # Deeper network with 4 hidden layers
         ])
@@ -73,6 +73,8 @@ class SolarPINN(nn.Module):
     def forward(self, x):
         # Initial layer
         x = self.input_layer(x)
+        # Handle input dimensions for InstanceNorm1d
+        x = x.unsqueeze(0) if x.dim() == 1 else x
         x = self.in1(x)
         x = F.relu(x)
         

@@ -83,38 +83,47 @@ class DataProcessor:
             raw_efficiency = torch.sigmoid(predictions)
             return torch.clamp(0.15 + (0.10 * raw_efficiency), min=0.15, max=0.25)
 
-    def generate_training_data(self, n_samples=1000):
-        """Generate synthetic training data with enhanced edge cases"""
-        # Generate more edge cases
-        n_night = int(n_samples * 0.3)  # 30% nighttime cases
-        n_transition = int(n_samples * 0.2)  # 20% sunrise/sunset
-        n_day = n_samples - n_night - n_transition
+    def generate_training_data(self, n_points=1000, n_time_points=24, n_angles=30, n_atm_points=10):
+        """Generate structured grid training data for PINN"""
+        # Create structured grids for spatial coordinates
+        lat_space = np.linspace(-90, 90, int(np.sqrt(n_points)))
+        lon_space = np.linspace(-180, 180, int(np.sqrt(n_points)))
+        
+        # Create structured grids for time and angles
+        time_space = np.linspace(0, 24, n_time_points)  # Full day coverage
+        slope_space = np.linspace(0, 90, n_angles)  # Panel tilt angles
+        aspect_space = np.linspace(0, 360, n_angles)  # Panel orientation angles
+        
+        # Create structured grids for atmospheric parameters
+        atm_space = np.linspace(0.5, 1.0, n_atm_points)  # Atmospheric transmission
+        cloud_space = np.linspace(0, 1.0, n_atm_points)  # Cloud cover
+        wavelength_space = np.linspace(0.3, 1.0, n_atm_points)  # Solar spectrum
+        
+        # Create meshgrid combinations
+        lat_grid, lon_grid, time_grid, slope_grid, aspect_grid, atm_grid, cloud_grid, wavelength_grid = np.meshgrid(
+            lat_space, lon_space, time_space, slope_space, aspect_space,
+            atm_space, cloud_space, wavelength_space,
+            indexing='ij'
+        )
+        
+        # Flatten all grids to 1D arrays
+        lat = lat_grid.flatten()
+        lon = lon_grid.flatten()
+        time = time_grid.flatten()
+        slope = slope_grid.flatten()
+        aspect = aspect_grid.flatten()
+        atm = atm_grid.flatten()
+        cloud_cover = cloud_grid.flatten()
+        wavelength = wavelength_grid.flatten()
 
-        # Nighttime data
-        night_hours = np.random.uniform(18, 24, n_night // 2)
-        night_hours = np.append(night_hours,
-                                np.random.uniform(0, 6, n_night // 2))
-
-        # Transition data (sunrise/sunset)
-        transition_hours = np.concatenate([
-            np.random.uniform(5, 7, n_transition // 2),  # sunrise
-            np.random.uniform(17, 19, n_transition // 2)  # sunset
-        ])
-
-        # Daytime data
-        day_hours = np.random.uniform(7, 17, n_day)
-
-        # Combine all hours
-        time = np.concatenate([night_hours, transition_hours, day_hours])
-
-        # Generate other parameters
-        lat = np.random.uniform(-90, 90, n_samples)
-        lon = np.random.uniform(-180, 180, n_samples)
-        slope = np.random.uniform(0, 90, n_samples)
-        aspect = np.random.uniform(0, 360, n_samples)
-        atm = np.random.uniform(0.5, 1.0, n_samples)
-        cloud_cover = np.random.uniform(0, 1, n_samples)
-        wavelength = np.random.uniform(0.3, 1.0, n_samples)
-
-        return self.prepare_data(lat, lon, time, slope, aspect, atm,
-                                 cloud_cover, wavelength)
+        # Return prepared data with structured grid samples
+        return self.prepare_data(
+            lat=lat,
+            lon=lon,
+            time=time,
+            slope=slope,
+            aspect=aspect,
+            atm=atm,
+            cloud_cover=cloud_cover,
+            wavelength=wavelength
+        )

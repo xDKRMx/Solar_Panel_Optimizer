@@ -71,38 +71,12 @@ class SolarPINN(nn.Module):
         physically_constrained = torch.min(prediction, max_possible) * atmospheric_attenuation * surface_factor
         return physically_constrained
         
-    def physics_based_irradiance(self, x):
-        """Complete physics-based solar irradiance calculation"""
-        # 1. Extract inputs
-        lat, lon, time, slope, aspect, atm, cloud, wavelength = x.split(1, dim=1)
-        
-        # 2. Solar Position
-        solar_angles = self.calculate_solar_position(lat, lon, time)
-        zenith_angle = solar_angles.zenith_angle
-        azimuth = solar_angles.azimuth
-        
-        # 3. Direct Normal Irradiance (DNI)
-        dni = self.solar_constant * torch.exp(-self.atmospheric_extinction *
-            self.calculate_air_mass(zenith_angle))
-        
-        # 4. Atmospheric Transmission
-        transmission = self.calculate_atmospheric_transmission(
-            atm, cloud, zenith_angle
-        )
-        
-        # 5. Surface Orientation Factor
-        surface_factor = self.calculate_surface_orientation_factor(
-            zenith_angle, azimuth, slope, aspect
-        )
-        
-        # 6. Diffuse Radiation
-        diffuse = self.calculate_diffuse_component(dni, zenith_angle, cloud)
-        
-        # 7. Total Irradiance
-        total_irradiance = (dni * surface_factor * transmission +
-                           diffuse * transmission)
-        
-        return total_irradiance
+    def calculate_max_possible_irradiance(self, lat, time):
+        """Calculate maximum possible irradiance based on solar position"""
+        declination = 23.45 * torch.sin(2 * torch.pi * (time - 81) / 365)
+        cos_zenith = torch.sin(torch.deg2rad(lat)) * torch.sin(torch.deg2rad(declination)) + \
+                     torch.cos(torch.deg2rad(lat)) * torch.cos(torch.deg2rad(declination))
+        return self.solar_constant * torch.clamp(cos_zenith, min=0.0)
     
     def calculate_atmospheric_attenuation(self, atm, cloud):
         """Calculate atmospheric attenuation factor"""
@@ -135,21 +109,14 @@ class SolarPINN(nn.Module):
     
     def radiative_transfer_equation(self, x, I):
         """Core PDE: Radiative Transfer Equation"""
-        # Get complete RTE components
+        # Get gradients
         I_gradients = torch.autograd.grad(I, x, create_graph=True)[0]
-        # Decompose gradients for lat, lon, time
-        dI_dx = I_gradients[:, 0:3]  # spatial gradients
-        
-        # Physics terms from current implementation
         extinction = self.calculate_extinction(x)
         emission = self.calculate_emission(x)
         scattering = self.calculate_scattering(x, I)
         
         # Complete RTE equation
-        rte_residual = (dI_dx +
-                       extinction * I -
-                       emission -
-                       scattering)
+        rte_residual = I_gradients + extinction*I - emission - scattering
         return rte_residual
     
     def calculate_extinction(self, x):
@@ -188,37 +155,21 @@ class SolarPINN(nn.Module):
     
     def physics_loss(self, x, y_pred):
         """Complete physics-informed loss"""
-        # 1. RTE Residual Loss
-        rte_loss = torch.mean(
-            torch.square(self.radiative_transfer_equation(x, y_pred))
-        )
+        # RTE loss
+        rte_loss = self.radiative_transfer_equation(x, y_pred)
         
-        # 2. Boundary Condition Loss
-        toa_condition, surface_condition = self.boundary_conditions(x)
-        bc_loss = torch.mean(
-            torch.square(y_pred - toa_condition) +
-            torch.square(y_pred - surface_condition)
-        )
+        # Boundary conditions
+        boundary_loss = self.boundary_conditions(x)
         
-        # 3. Physics-Based Prediction Loss
-        physics_pred = self.physics_based_irradiance(x)
-        physics_consistency_loss = torch.mean(
-            torch.square(y_pred - physics_pred)
-        )
+        # Conservation laws
+        conservation_loss = self.energy_conservation(x, y_pred)
         
-        # 4. Energy Conservation Loss
-        energy_balance = self.check_energy_conservation(x, y_pred)
-        conservation_loss = torch.mean(torch.square(energy_balance))
+        # Spectral constraints
+        spectral_loss = self.spectral_constraints(x, y_pred)
         
-        # Combine losses with weights
-        total_physics_loss = (
-            self.w1 * rte_loss +
-            self.w2 * bc_loss +
-            self.w3 * physics_consistency_loss +
-            self.w4 * conservation_loss
-        )
-        
-        return total_physics_loss
+        # Combined physics loss
+        return (rte_loss + boundary_loss + 
+                conservation_loss + spectral_loss)
                 
     def spectral_constraints(self, x, y_pred):
         """Apply spectral physics constraints"""
@@ -287,24 +238,8 @@ class PINNTrainer:
     def calculate_absorbed_radiation(self, x, y_pred):
         """Calculate absorbed radiation"""
         return (1 - self.albedo) * y_pred
-    
-    def calculate_max_possible_irradiance(self, lat, time):
-        '''Calculate maximum possible irradiance based on solar position'''
-        # Calculate solar zenith angle
-        hour_angle = 2 * torch.pi * (time / 24 - 0.5)
-        declination = 23.45 * torch.sin(2 * torch.pi * (time - 81) / 365)
-        declination_rad = torch.deg2rad(torch.tensor(declination))
-        lat_rad = torch.deg2rad(lat)
-        
-        # Calculate cosine of solar zenith angle
-        cos_zenith = torch.sin(lat_rad) * torch.sin(declination_rad) + \
-                     torch.cos(lat_rad) * torch.cos(declination_rad) * torch.cos(hour_angle)
-        
-        # Maximum possible irradiance at the surface
-        max_irradiance = self.solar_constant * torch.clamp(cos_zenith, min=0.0)
-        
-        return max_irradiance
-        
+        return total_loss.item()
+
     def calculate_adaptive_weights(self, data_loss, physics_loss, bc_loss):
         # Normalize losses
         total_magnitude = data_loss + physics_loss + bc_loss

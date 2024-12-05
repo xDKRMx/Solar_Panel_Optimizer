@@ -287,8 +287,24 @@ class PINNTrainer:
     def calculate_absorbed_radiation(self, x, y_pred):
         """Calculate absorbed radiation"""
         return (1 - self.albedo) * y_pred
-        return total_loss.item()
-
+    
+    def calculate_max_possible_irradiance(self, lat, time):
+        '''Calculate maximum possible irradiance based on solar position'''
+        # Calculate solar zenith angle
+        hour_angle = 2 * torch.pi * (time / 24 - 0.5)
+        declination = 23.45 * torch.sin(2 * torch.pi * (time - 81) / 365)
+        declination_rad = torch.deg2rad(torch.tensor(declination))
+        lat_rad = torch.deg2rad(lat)
+        
+        # Calculate cosine of solar zenith angle
+        cos_zenith = torch.sin(lat_rad) * torch.sin(declination_rad) + \
+                     torch.cos(lat_rad) * torch.cos(declination_rad) * torch.cos(hour_angle)
+        
+        # Maximum possible irradiance at the surface
+        max_irradiance = self.solar_constant * torch.clamp(cos_zenith, min=0.0)
+        
+        return max_irradiance
+        
     def calculate_adaptive_weights(self, data_loss, physics_loss, bc_loss):
         # Normalize losses
         total_magnitude = data_loss + physics_loss + bc_loss

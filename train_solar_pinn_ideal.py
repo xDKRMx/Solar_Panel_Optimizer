@@ -5,13 +5,39 @@ from solar_pinn_ideal import SolarPINN, PINNTrainer
 from physics_validator import SolarPhysicsIdeal
 
 def generate_training_data(n_samples=1000, validation_split=0.2):
-    """Generate synthetic training data for ideal clear sky conditions."""
-    # Generate random input parameters with normalization
-    latitude = (torch.rand(n_samples) * 180 - 90).requires_grad_()  # -90 to 90 degrees
-    longitude = (torch.rand(n_samples) * 360 - 180).requires_grad_()  # -180 to 180 degrees
-    time = (torch.rand(n_samples) * 24).requires_grad_()  # 0 to 24 hours
-    slope = (torch.rand(n_samples) * 45).requires_grad_()  # 0 to 45 degrees slope
-    aspect = (torch.rand(n_samples) * 360).requires_grad_()  # 0 to 360 degrees aspect
+    """
+    Generate synthetic training data for ideal clear sky conditions with balanced hemisphere representation.
+    
+    Args:
+        n_samples: Number of training samples to generate
+        validation_split: Fraction of data to use for validation
+        
+    Returns:
+        Training and validation data tensors
+    """
+    # Ensure equal representation of both hemispheres
+    n_per_hemisphere = n_samples // 2
+    
+    # Generate all parameters first without requires_grad
+    northern_lat = torch.rand(n_per_hemisphere) * 90  # 0 to 90 degrees
+    southern_lat = -torch.rand(n_per_hemisphere) * 90  # -90 to 0 degrees
+    latitude = torch.cat([northern_lat, southern_lat])
+    
+    longitude = torch.rand(n_samples) * 360 - 180  # -180 to 180 degrees
+    time = torch.rand(n_samples) * 24  # 0 to 24 hours
+    slope = torch.rand(n_samples) * 45  # 0 to 45 degrees slope
+    
+    # Generate aspect angles considering hemisphere
+    northern_aspect = 180 + torch.rand(n_per_hemisphere) * 180  # Northern hemisphere
+    southern_aspect = torch.rand(n_per_hemisphere) * 180  # Southern hemisphere
+    aspect = torch.cat([northern_aspect, southern_aspect])
+    
+    # Make tensors require gradients after all computations
+    latitude = latitude.requires_grad_()
+    longitude = longitude.requires_grad_()
+    time = time.requires_grad_()
+    slope = slope.requires_grad_()
+    aspect = aspect.requires_grad_()
     
     # Normalize inputs
     lat_norm = latitude / 90

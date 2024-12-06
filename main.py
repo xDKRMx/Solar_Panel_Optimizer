@@ -16,9 +16,18 @@ def main():
     # Load the trained model
     try:
         model = load_model('best_solar_pinn_ideal.pth')
+        if model is None:
+            st.warning("Training in progress. Please wait for the model to complete training.")
+            st.stop()
+    except FileNotFoundError:
+        st.warning("Model file not found. Training may be in progress.")
+        st.stop()
     except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
-        return
+        st.error(f"""
+        Error loading model: {str(e)}
+        Please ensure the model has been trained and saved correctly.
+        """)
+        st.stop()
     
     # Sidebar inputs
     st.sidebar.header("Parameters")
@@ -64,11 +73,11 @@ def main():
         
         # Determine color based on accuracy ratio
         if accuracy_ratio > 85:
-            metrics_color = "#1b4332"  # Green
+            metrics_color = "#1b4332"  # Muted Green
         elif accuracy_ratio > 70:
-            metrics_color = "#ffaa00"  # Orange
+            metrics_color = "#c17900"  # Softer Orange
         else:
-            metrics_color = "#ff4444"  # Red
+            metrics_color = "#b71c1c"  # Softer Red
         
         # Display accuracy metrics with dynamic styling
         st.markdown("""
@@ -91,7 +100,7 @@ def main():
         """, unsafe_allow_html=True)
         
         st.markdown(f"""
-            <div class='metrics-box' style='background-color: {metrics_color};'>
+            <div class='metrics-box' style='background-color: {metrics_color}; color: #ffffff;'>
                 <div class='metrics-content'>
                     <p class='metrics-header'>Accuracy Metrics</p>
                     <p>Accuracy Ratio: {accuracy_ratio:.2f}%</p>

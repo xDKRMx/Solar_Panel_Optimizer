@@ -51,11 +51,46 @@ class SolarPINN(nn.Module):
         return torch.deg2rad(15 * (time - 12))  # Convert hour to radians
 
     def calculate_zenith_angle(self, lat, declination, hour_angle):
-        """Calculate solar zenith angle."""
+        """
+        Calculate solar zenith angle with proper handling of southern hemisphere.
+        
+        Args:
+            lat: Latitude in degrees (-90 to 90)
+            declination: Solar declination angle in radians
+            hour_angle: Hour angle in radians
+        
+        Returns:
+            Zenith angle in radians
+        """
+        # Input validation for latitude
+        if torch.any(torch.abs(lat) > 90):
+            raise ValueError("Latitude must be between -90 and 90 degrees")
+            
+        # Convert latitude to radians
         lat_rad = torch.deg2rad(lat)
+        
+        # Calculate cosine of zenith angle
+        # The formula remains the same for both hemispheres due to the sign of latitude
         cos_zenith = (torch.sin(lat_rad) * torch.sin(declination) + 
                      torch.cos(lat_rad) * torch.cos(declination) * torch.cos(hour_angle))
-        return torch.arccos(torch.clamp(cos_zenith, -1, 1))
+        
+        # Clamp values to valid range [-1, 1] to avoid numerical instability
+        cos_zenith = torch.clamp(cos_zenith, -1, 1)
+        
+        # Calculate zenith angle
+        zenith = torch.arccos(cos_zenith)
+        
+        # Additional correction for extreme latitudes during summer/winter
+        is_southern = lat < 0
+        is_summer = declination > 0
+        
+        # Adjust for permanent day/night conditions near poles
+        polar_day = is_southern & ~is_summer | ~is_southern & is_summer
+        zenith = torch.where(polar_day & (lat_rad.abs() > torch.pi/3),
+                           torch.min(zenith, torch.tensor(torch.pi/2)),
+                           zenith)
+        
+        return zenith
 
     def calculate_air_mass(self, zenith_angle):
         """Calculate air mass using Kasten & Young formula."""

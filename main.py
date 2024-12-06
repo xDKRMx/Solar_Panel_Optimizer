@@ -64,31 +64,31 @@ def main():
         
         # Determine color based on accuracy ratio
         if accuracy_ratio > 85:
-            metrics_color = "#1b4332"  # Green
+            metrics_color = "rgb(27, 67, 50)"  # Dark green
         elif accuracy_ratio > 70:
-            metrics_color = "#ffaa00"  # Orange
+            metrics_color = "rgb(84, 52, 39)"  # Dark orange/brown
         else:
-            metrics_color = "#ff4444"  # Red
+            metrics_color = "rgb(91, 47, 47)"  # Dark red/brown
         
         # Display accuracy metrics with dynamic styling
-        st.markdown("""
+        st.markdown('''
             <style>
             .metrics-box {
-                padding: 10px;
-                border-radius: 10px;
+                padding: 15px;
+                border-radius: 8px;
                 margin: 10px 0;
+                color: white;
             }
             .metrics-content {
                 margin: 0;
-                font-size: 0.9em;
+                padding: 0;
             }
             .metrics-header {
-                margin: 0 0 8px 0;
-                font-size: 1.1em;
+                margin: 0 0 10px 0;
                 font-weight: bold;
             }
             </style>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
         
         st.markdown(f"""
             <div class='metrics-box' style='background-color: {metrics_color};'>
@@ -111,15 +111,15 @@ def main():
                 fig, metrics = create_surface_plot(model, latitude, longitude, hour)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # Display optimal parameters in green box
+                # Display optimal parameters with consistent styling
                 st.markdown(f"""
-                    <div class='accuracy-box'>
-                        <h3>Optimal Parameters:</h3>
-                        <ul>
-                            <li>Slope: {metrics['optimal_slope']:.1f}°</li>
-                            <li>Aspect: {metrics['optimal_aspect']:.1f}°</li>
-                            <li>Expected Efficiency: {metrics['max_efficiency']:.3f}</li>
-                        </ul>
+                    <div class='metrics-box' style='background-color: rgb(27, 67, 50);'>
+                        <div class='metrics-content'>
+                            <p class='metrics-header'>Optimal Parameters</p>
+                            <p>Slope: {metrics['optimal_slope']:.1f}°</p>
+                            <p>Aspect: {metrics['optimal_aspect']:.1f}°</p>
+                            <p>Expected Efficiency: {metrics['max_efficiency']:.3f}</p>
+                        </div>
                     </div>
                 """, unsafe_allow_html=True)
                 

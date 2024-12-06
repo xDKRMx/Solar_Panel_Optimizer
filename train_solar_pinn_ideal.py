@@ -6,25 +6,35 @@ from physics_validator import SolarPhysicsIdeal
 
 def generate_training_data(n_samples=1000, validation_split=0.2):
     """Generate synthetic training data for ideal clear sky conditions."""
-    # Generate random input parameters
+    # Generate random input parameters with normalization
     latitude = (torch.rand(n_samples) * 180 - 90).requires_grad_()  # -90 to 90 degrees
     longitude = (torch.rand(n_samples) * 360 - 180).requires_grad_()  # -180 to 180 degrees
     time = (torch.rand(n_samples) * 24).requires_grad_()  # 0 to 24 hours
     slope = (torch.rand(n_samples) * 45).requires_grad_()  # 0 to 45 degrees slope
     aspect = (torch.rand(n_samples) * 360).requires_grad_()  # 0 to 360 degrees aspect
     
-    # Create input tensor
-    x_data = torch.stack([latitude, longitude, time, slope, aspect], dim=1).float()
+    # Normalize inputs
+    lat_norm = latitude / 90
+    lon_norm = longitude / 180
+    time_norm = time / 24
+    slope_norm = slope / 180
+    aspect_norm = aspect / 360
+    
+    # Create normalized input tensor
+    x_data = torch.stack([lat_norm, lon_norm, time_norm, slope_norm, aspect_norm], dim=1).float()
     
     # Calculate theoretical clear-sky irradiance using physics validator
     physics_model = SolarPhysicsIdeal()
     y_data = []
     
     for i in range(n_samples):
+        # Use original values for physics calculation
         irradiance = physics_model.calculate_irradiance(
             latitude[i], time[i], slope[i], aspect[i]
         )
-        y_data.append(irradiance)
+        # Normalize irradiance
+        irradiance_norm = irradiance / physics_model.solar_constant
+        y_data.append(irradiance_norm)
     
     y_data = torch.stack(y_data).reshape(-1, 1).float().requires_grad_()
     

@@ -85,11 +85,18 @@ class SolarPINN(nn.Module):
         return sunrise, sunset
 
     def forward(self, x):
-        """Forward pass with essential physics constraints."""
-        # Extract input components
-        lat, lon, time, slope, aspect = x.split(1, dim=1)
+        """Forward pass with essential physics constraints using normalized inputs."""
+        # Extract normalized input components
+        lat_norm, lon_norm, time_norm, slope_norm, aspect_norm = x.split(1, dim=1)
         
-        # Calculate day of year from time (assuming time includes day information)
+        # Denormalize inputs for physics calculations
+        lat = lat_norm * 90
+        lon = lon_norm * 180
+        time = time_norm * 24
+        slope = slope_norm * 180
+        aspect = aspect_norm * 360
+        
+        # Calculate day of year from denormalized time
         day_of_year = torch.floor(time / 24 * 365)
         hour_of_day = time % 24
         
@@ -106,22 +113,25 @@ class SolarPINN(nn.Module):
         sun_azimuth = torch.rad2deg(hour_angle)  # Simplified sun azimuth
         surface_factor = self.calculate_surface_orientation_factor(zenith_angle, slope, sun_azimuth, aspect)
         
-        # Neural network prediction
+        # Neural network prediction (normalized)
         prediction = self.physics_net(x)
         
-        # Apply physical constraints
+        # Re-dimensionalize the prediction and apply physical constraints
+        prediction = prediction * self.solar_constant  # Convert normalized output back to W/m²
         constrained_prediction = (prediction * 
-                                atmospheric_transmission * 
-                                surface_factor * 
-                                self.solar_constant)
+                               atmospheric_transmission * 
+                               surface_factor)
         
         # Apply day/night boundary conditions
         sunrise, sunset = self.boundary_conditions(lat, day_of_year)
         is_daytime = (hour_of_day >= sunrise) & (hour_of_day <= sunset)
         
-        return torch.where(is_daytime, 
-                         torch.clamp(constrained_prediction, min=0.0),
-                         torch.zeros_like(constrained_prediction))
+        final_prediction = torch.where(is_daytime, 
+                                    torch.clamp(constrained_prediction, min=0.0),
+                                    torch.zeros_like(constrained_prediction))
+        
+        # Return normalized prediction for training
+        return final_prediction / self.solar_constant
 
 class PINNTrainer:
     def __init__(self, model, learning_rate=0.001):
@@ -129,40 +139,37 @@ class PINNTrainer:
         self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     def train_step(self, x_data, y_data):
-        # Zero gradients at the start
         self.optimizer.zero_grad()
         
-        try:
-            # Forward pass with gradient computation
-            y_pred = self.model(x_data)
-            
-            # Calculate data loss
-            data_loss = F.mse_loss(y_pred, y_data)
-            
-            # Extract time components for boundary conditions
-            lat = x_data[:, 0]
-            time = x_data[:, 2]
-            day_of_year = torch.floor(time / 24 * 365)
-            hour_of_day = time % 24
-            
-            # Calculate physics loss with retain_graph
-            sunrise, sunset = self.model.boundary_conditions(lat, day_of_year)
-            night_mask = (hour_of_day < sunrise) | (hour_of_day > sunset)
-            physics_loss = torch.mean(y_pred[night_mask] ** 2)  # Should be zero at night
-            
-            # Combined loss
-            total_loss = data_loss + 0.1 * physics_loss
-            
-            # Backward pass with retain_graph=True for the first backward
-            total_loss.backward(retain_graph=True)
-            
-            # Optimizer step
-            self.optimizer.step()
-            
-            # Clear computation graph
-            self.optimizer.zero_grad()
-            
-            return total_loss.item()
-        except Exception as e:
-            print(f"Training error: {str(e)}")
-            return float('inf')
+        # Forward pass
+        y_pred = self.model(x_data)
+        
+        # Calculate data loss
+        data_loss = F.mse_loss(y_pred, y_data)
+        
+        # Extract time components for boundary conditions
+        lat = x_data[:, 0] * 90
+        time = x_data[:, 2] * 24
+        day_of_year = torch.floor(time / 24 * 365)
+        hour_of_day = time % 24
+        
+        # Calculate physics loss
+        sunrise, sunset = self.model.boundary_conditions(lat, day_of_year)
+        night_mask = (hour_of_day < sunrise) | (hour_of_day > sunset)
+        physics_loss = torch.mean(y_pred[night_mask] ** 2)
+        
+        # Combined loss with retain_graph
+        total_loss = data_loss + 0.1 * physics_loss
+        
+        # Backward pass with retain_graph
+        total_loss.backward(retain_graph=True)
+        
+        # Optimizer step
+        self.optimizer.step()
+        
+        # Clean up graphs
+        for param in self.model.parameters():
+            if param.grad is not None:
+                param.grad.detach_()
+        
+        return total_loss.item()

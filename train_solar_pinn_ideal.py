@@ -6,19 +6,12 @@ from physics_validator import SolarPhysicsIdeal
 
 def generate_training_data(n_samples=1000, validation_split=0.2):
     """Generate synthetic training data for ideal clear sky conditions."""
-    # Generate random input parameters with normalization and better distribution
+    # Generate random input parameters with normalization
     latitude = (torch.rand(n_samples) * 180 - 90).requires_grad_()  # -90 to 90 degrees
     longitude = (torch.rand(n_samples) * 360 - 180).requires_grad_()  # -180 to 180 degrees
     time = (torch.rand(n_samples) * 24).requires_grad_()  # 0 to 24 hours
     slope = (torch.rand(n_samples) * 45).requires_grad_()  # 0 to 45 degrees slope
     aspect = (torch.rand(n_samples) * 360).requires_grad_()  # 0 to 360 degrees aspect
-    
-    # Ensure inputs are on CPU and have correct dtype
-    latitude = latitude.cpu().float()
-    longitude = longitude.cpu().float()
-    time = time.cpu().float()
-    slope = slope.cpu().float()
-    aspect = aspect.cpu().float()
     
     # Normalize inputs
     lat_norm = latitude / 90
@@ -35,6 +28,7 @@ def generate_training_data(n_samples=1000, validation_split=0.2):
     y_data = []
     
     for i in range(n_samples):
+        # Use original values for physics calculation
         irradiance = physics_model.calculate_irradiance(
             latitude[i], time[i], slope[i], aspect[i]
         )
@@ -71,7 +65,7 @@ def main():
     
     # Training parameters
     n_epochs = 200
-    batch_size = 32  # Restored to original batch size
+    batch_size = 64  # Increased batch size
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')
     patience = 20
@@ -84,44 +78,38 @@ def main():
         gamma=0.5
     )
     
-    # Fixed physics weight
-    physics_weight = 0.1  # Reset to original value
+    # Physics loss weight scheduling
+    initial_physics_weight = 0.15
+    max_physics_weight = 0.3
+    physics_weight = initial_physics_weight
     
     print("Starting training...")
     print(f"Training samples: {len(x_train)}, Validation samples: {len(x_val)}")
     
     for epoch in range(n_epochs):
-        try:
-            # Training
-            model.train()
-            epoch_loss = 0
+        # Training
+        model.train()
+        epoch_loss = 0
+        
+        # Shuffle training data
+        indices = torch.randperm(len(x_train))
+        
+        for i in range(n_batches):
+            batch_indices = indices[i*batch_size:(i+1)*batch_size]
+            x_batch = x_train[batch_indices]
+            y_batch = y_train[batch_indices]
             
-            # Shuffle training data
-            indices = torch.randperm(len(x_train))
+            # Update physics weight gradually
+            physics_weight = initial_physics_weight + (max_physics_weight - initial_physics_weight) * (epoch / n_epochs)
             
-            for i in range(n_batches):
-                try:
-                    batch_indices = indices[i*batch_size:(i+1)*batch_size]
-                    x_batch = x_train[batch_indices]
-                    y_batch = y_train[batch_indices]
-                    
-                    # Training step with fixed physics weight
-                    loss = trainer.train_step(x_batch, y_batch, physics_weight=physics_weight)
-                    
-                    # Check for NaN loss
-                    if torch.isnan(torch.tensor(loss)):
-                        print(f"NaN loss detected in batch {i}, skipping...")
-                        continue
-                        
-                    epoch_loss += loss
-                except Exception as e:
-                    print(f"Error in batch {i}: {str(e)}")
-                    continue
+            # Training step with current physics weight
+            loss = trainer.train_step(x_batch, y_batch, physics_weight=physics_weight)
+            epoch_loss += loss
             
+        # Step the learning rate scheduler
+        scheduler.step()
+        
         avg_train_loss = epoch_loss / n_batches
-            
-            # Step the learning rate scheduler
-            scheduler.step()
         
         # Validation
         model.eval()
@@ -156,7 +144,7 @@ def main():
             print(f"Early stopping triggered at epoch {epoch+1}")
             break
         
-        if (epoch + 1) % 5 == 0:
+        if (epoch + 1) % 5 == 0:  # Print more frequently
             print(f"\nEpoch [{epoch+1}/{n_epochs}]")
             print(f"Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}")
             print(f"Validation Metrics:")

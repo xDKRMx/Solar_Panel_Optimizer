@@ -64,11 +64,11 @@ def main():
         
         # Determine color based on accuracy ratio
         if accuracy_ratio > 85:
-            metrics_color = "#1b4332"  # Keep existing green for high accuracy
+            metrics_color = "#1b4332"  # Green
         elif accuracy_ratio > 70:
-            metrics_color = "rgb(84, 52, 39)"  # Brown for medium accuracy
+            metrics_color = "#ffaa00"  # Orange
         else:
-            metrics_color = "rgb(91, 47, 47)"  # Red for low accuracy
+            metrics_color = "#ff4444"  # Red
         
         # Display accuracy metrics with dynamic styling
         st.markdown("""
@@ -106,6 +106,7 @@ def main():
     if st.button("Generate 3D Surface Plot"):
         with st.spinner("Generating visualization..."):
             try:
+                
                 # Generate and display the 3D plot
                 fig, metrics = create_surface_plot(model, latitude, longitude, hour)
                 st.plotly_chart(fig, use_container_width=True)

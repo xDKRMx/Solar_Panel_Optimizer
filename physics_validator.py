@@ -79,7 +79,7 @@ class SolarPhysicsIdeal:
         return torch.clamp(irradiance, min=0.0)  # Ensure non-negative irradiance
 
 def calculate_metrics(y_true, y_pred):
-    """Calculate comprehensive validation metrics between true and predicted values."""
+    """Calculate validation metrics between true and predicted values."""
     # Mean Absolute Error
     mae = torch.mean(torch.abs(y_true - y_pred))
     
@@ -91,50 +91,8 @@ def calculate_metrics(y_true, y_pred):
     ss_res = torch.sum((y_true - y_pred) ** 2)
     r2 = 1 - (ss_res / ss_tot)
     
-    # Mean Absolute Percentage Error (MAPE)
-    epsilon = 1e-7  # Small constant to avoid division by zero
-    mape = torch.mean(torch.abs((y_true - y_pred) / (y_true + epsilon))) * 100
-    
-    # Physics-based validation: Energy conservation
-    total_energy_true = torch.sum(y_true)
-    total_energy_pred = torch.sum(y_pred)
-    energy_conservation_error = torch.abs(total_energy_true - total_energy_pred) / total_energy_true
-    
     return {
         'mae': mae.item(),
         'rmse': rmse.item(),
-        'r2': r2.item(),
-        'mape': mape.item(),
-        'energy_conservation_error': energy_conservation_error.item()
+        'r2': r2.item()
     }
-
-def cross_validate(model, x_data, y_data, n_folds=5):
-    """Perform k-fold cross-validation."""
-    dataset_size = len(x_data)
-    fold_size = dataset_size // n_folds
-    metrics_per_fold = []
-    
-    for i in range(n_folds):
-        # Create validation fold
-        val_start = i * fold_size
-        val_end = val_start + fold_size
-        
-        x_val = x_data[val_start:val_end]
-        y_val = y_data[val_start:val_end]
-        
-        # Create training folds
-        x_train = torch.cat([x_data[:val_start], x_data[val_end:]], dim=0)
-        y_train = torch.cat([y_data[:val_start], y_data[val_end:]], dim=0)
-        
-        # Evaluate on validation fold
-        with torch.no_grad():
-            y_pred = model(x_val)
-            fold_metrics = calculate_metrics(y_val, y_pred)
-            metrics_per_fold.append(fold_metrics)
-    
-    # Average metrics across folds
-    avg_metrics = {}
-    for key in metrics_per_fold[0].keys():
-        avg_metrics[key] = sum(fold[key] for fold in metrics_per_fold) / n_folds
-    
-    return avg_metrics

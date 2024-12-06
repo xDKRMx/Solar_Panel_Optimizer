@@ -167,12 +167,13 @@ def main():
             ]]).float()
             predicted_irradiance = model(current_input).item() * model.solar_constant
         
-        # Calculate physics-based irradiance and efficiency
+        # Calculate physics-based irradiance and efficiency using predicted irradiance
         lat_tensor = torch.tensor([latitude], dtype=torch.float32)
         hour_tensor = torch.tensor([hour], dtype=torch.float32)
         results = physics_model.calculate_irradiance(
             latitude=lat_tensor,
-            time=hour_tensor
+            time=hour_tensor,
+            predicted_irradiance=predicted_irradiance  # Use PINN predicted irradiance
         )
         physics_irradiance = results['irradiance'].item()
         efficiency = results['efficiency'].item()

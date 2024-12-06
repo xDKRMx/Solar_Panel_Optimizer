@@ -97,7 +97,7 @@ class SolarPhysicsIdeal:
         """Calculate the hour angle (h) based on the time of day."""
         return torch.deg2rad(15 * (time - 12))
 
-    def calculate_irradiance(self, latitude, time, slope=0, panel_azimuth=0, ambient_temperature=25.0):
+    def calculate_irradiance(self, latitude, time, slope=0, panel_azimuth=0, ambient_temperature=25.0, predicted_irradiance=None):
         """Calculate the total solar irradiance and efficiency at the surface with temperature correction.
         
         The efficiency is calculated using the formula: η = ηref * fsurf * [1 + β(Tc - Tref)]
@@ -107,7 +107,8 @@ class SolarPhysicsIdeal:
         - β: Temperature coefficient
         - Tc: Cell temperature = Ta + (I/800) * (NOCT-20)
         - Tref: Reference temperature
-        - Ta: Ambient temperature"""
+        - Ta: Ambient temperature
+        - I: Irradiance (either predicted or physics-based)"""
         # Ensure inputs are tensors with proper dtype
         latitude = torch.as_tensor(latitude, dtype=torch.float32)
         time = torch.as_tensor(time, dtype=torch.float32)
@@ -139,8 +140,11 @@ class SolarPhysicsIdeal:
         )
 
         # Step 7: Calculate irradiance and efficiency
-        # Calculate irradiance using atmospheric transmission and surface orientation
-        irradiance = self.solar_constant * transmission * surface_orientation
+        # Use predicted irradiance if provided, otherwise calculate using physics model
+        if predicted_irradiance is not None:
+            irradiance = predicted_irradiance
+        else:
+            irradiance = self.solar_constant * transmission * surface_orientation
         
         # Calculate cell temperature using the provided formula
         # Tc = Ta + (I/800) * (NOCT-20)

@@ -106,12 +106,37 @@ def main():
             on_change=lambda: update_param('day_of_year')
         )
     
+    # Calculate sunrise/sunset times
+    lat_tensor = torch.tensor([latitude], dtype=torch.float32)
+    day_tensor = torch.tensor([day_of_year], dtype=torch.float32)
+    sunrise, sunset = model.boundary_conditions(lat_tensor, day_tensor)
+    
+    # Convert to scalar values
+    sunrise_time = sunrise.item()
+    sunset_time = sunset.item()
+    
+    # Handle polar day/night cases
+    is_polar_day = sunrise_time == 0 and sunset_time == 24
+    is_polar_night = torch.isinf(sunrise_time) and torch.isinf(sunset_time)
+    
+    # Display sunrise/sunset info
+    st.sidebar.markdown("### Daylight Information")
+    if is_polar_day:
+        st.sidebar.info("24-hour daylight (Polar Day)")
+        min_time, max_time = 0.0, 24.0
+    elif is_polar_night:
+        st.sidebar.warning("24-hour darkness (Polar Night)")
+        min_time, max_time = 0.0, 24.0
+    else:
+        st.sidebar.info(f"Sunrise: {sunrise_time:.2f}h\nSunset: {sunset_time:.2f}h")
+        min_time, max_time = 0.0, 24.0  # Allow full range for comparison
+    
     # Hour of Day input with slider and number input
     hour_col1, hour_col2 = st.sidebar.columns([3, 1])
     with hour_col1:
         hour = st.slider(
-            "Hour of Day", 0.0, 24.0,
-            value=st.session_state.get('hour', 12.0),
+            "Hour of Day", min_time, max_time,
+            value=min(max(st.session_state.get('hour', 12.0), min_time), max_time),
             key='hour_slider',
             step=0.1,
             on_change=lambda: update_param('hour')
@@ -119,8 +144,8 @@ def main():
     with hour_col2:
         st.write("")
         hour = st.number_input(
-            "", 0.0, 24.0,
-            value=st.session_state.get('hour', 12.0),
+            "", min_time, max_time,
+            value=min(max(st.session_state.get('hour', 12.0), min_time), max_time),
             key='hour_input',
             step=0.1,
             label_visibility="collapsed",
@@ -159,6 +184,12 @@ def main():
     
     # Calculate predictions and metrics
     try:
+        # Check if current time is within daylight hours
+        is_daytime = not is_polar_night and (
+            is_polar_day or 
+            (hour >= sunrise_time and hour <= sunset_time)
+        )
+        
         with torch.no_grad():
             current_input = torch.tensor([[
                 latitude/90, longitude/180, 
@@ -166,6 +197,10 @@ def main():
                 180/360  # Default aspect (south-facing)
             ]]).float()
             predicted_irradiance = model(current_input).item() * model.solar_constant
+            
+            # Set irradiance to 0 during nighttime
+            if not is_daytime:
+                predicted_irradiance = 0.0
         
         # Calculate physics-based irradiance and efficiency
         lat_tensor = torch.tensor([latitude], dtype=torch.float32)
@@ -183,7 +218,17 @@ def main():
             panel_azimuth=torch.tensor([180.0])  # Default south-facing
         ).item()
         
-        # Display predictions section
+        # Display daylight status and predictions section
+        st.subheader("Current Conditions")
+        if is_polar_day:
+            st.info("🌞 Polar Day (24-hour daylight)")
+        elif is_polar_night:
+            st.warning("🌑 Polar Night (24-hour darkness)")
+        elif hour >= sunrise_time and hour <= sunset_time:
+            st.info(f"🌞 Daytime (Sun is above horizon)")
+        else:
+            st.warning(f"🌑 Nighttime (Sun is below horizon)")
+            
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("PINN Prediction")

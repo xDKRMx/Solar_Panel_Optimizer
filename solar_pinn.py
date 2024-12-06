@@ -74,16 +74,47 @@ class SolarPINN(nn.Module):
         return torch.clamp(surface_factor, 0, 1)
 
     def calculate_sunrise_sunset(self, latitude, declination):
-        """Calculate sunrise and sunset times."""
+        """Calculate sunrise and sunset times using accurate equations.
+        
+        Args:
+            latitude: Latitude of the location (in degrees)
+            declination: Solar declination angle (in degrees)
+            
+        Returns:
+            tuple: (sunrise time, sunset time) in hours (local solar time)
+        """
+        # Convert angles to radians
         lat_rad = torch.deg2rad(latitude)
         decl_rad = torch.deg2rad(declination)
         
+        # Calculate hour angle at sunrise/sunset using the equation:
+        # cos(h) = -tan(φ) · tan(δ)
         cos_hour_angle = -torch.tan(lat_rad) * torch.tan(decl_rad)
+        
+        # Clamp values to handle edge cases (polar days/nights)
         cos_hour_angle = torch.clamp(cos_hour_angle, -1, 1)
         
+        # Convert to hour angle in radians
         hour_angle = torch.arccos(cos_hour_angle)
-        sunrise = 12 - (torch.rad2deg(hour_angle) / 15)
-        sunset = 12 + (torch.rad2deg(hour_angle) / 15)
+        
+        # Convert hour angle to hours (divide by 15 degrees per hour)
+        # Sunrise = 12 - h/15, Sunset = 12 + h/15
+        hour_offset = torch.rad2deg(hour_angle) / 15
+        
+        sunrise = 12 - hour_offset
+        sunset = 12 + hour_offset
+        
+        # Handle special cases for polar regions
+        is_polar_day = cos_hour_angle < -1
+        is_polar_night = cos_hour_angle > 1
+        
+        # During polar day, sun never sets (24h daylight)
+        sunrise = torch.where(is_polar_day, torch.zeros_like(sunrise), sunrise)
+        sunset = torch.where(is_polar_day, torch.full_like(sunset, 24), sunset)
+        
+        # During polar night, sun never rises (24h darkness)
+        sunrise = torch.where(is_polar_night, torch.full_like(sunrise, float('inf')), sunrise)
+        sunset = torch.where(is_polar_night, torch.full_like(sunset, float('inf')), sunset)
         
         return sunrise, sunset
 

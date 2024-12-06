@@ -140,26 +140,31 @@ class SolarPhysicsIdeal:
         )
 
         # Step 7: Calculate irradiance and efficiency
-        # Use predicted irradiance if provided, otherwise calculate using physics model
+        # Convert predicted irradiance to tensor if provided
         if predicted_irradiance is not None:
-            irradiance = predicted_irradiance
+            irradiance = torch.as_tensor(predicted_irradiance, dtype=torch.float32)
         else:
             irradiance = self.solar_constant * transmission * surface_orientation
         
         # Calculate cell temperature using the provided formula
         # Tc = Ta + (I/800) * (NOCT-20)
-        cell_temperature = ambient_temperature + (irradiance/800) * (self.noct - 20)
+        ambient_temperature = torch.as_tensor(ambient_temperature, dtype=torch.float32)
+        noct_diff = torch.as_tensor(self.noct - 20, dtype=torch.float32)
+        cell_temperature = ambient_temperature + (irradiance/800) * noct_diff
         
         # Calculate temperature correction factor: [1 + β(Tc - Tref)]
-        temp_correction = 1 + self.temp_coefficient * (cell_temperature - self.ref_temperature)
+        temp_coeff = torch.as_tensor(self.temp_coefficient, dtype=torch.float32)
+        ref_temp = torch.as_tensor(self.ref_temperature, dtype=torch.float32)
+        temp_correction = 1 + temp_coeff * (cell_temperature - ref_temp)
+        temp_correction = torch.as_tensor(temp_correction, dtype=torch.float32)
         
         # Calculate final efficiency with temperature correction: η = ηref * fsurf * [1 + β(Tc - Tref)]
-        base_efficiency = self.reference_efficiency * surface_orientation
+        base_efficiency = torch.as_tensor(self.reference_efficiency, dtype=torch.float32) * surface_orientation
         efficiency = base_efficiency * temp_correction
         
         return {
             'irradiance': torch.clamp(irradiance, min=0.0),  # Ensure non-negative irradiance
-            'efficiency': torch.clamp(efficiency, min=0.0, max=self.reference_efficiency),  # Bounded efficiency
+            'efficiency': torch.clamp(efficiency, min=0.0, max=float(self.reference_efficiency)),  # Bounded efficiency
             'surface_factor': surface_orientation,  # Surface orientation factor
             'cell_temperature': cell_temperature,  # Cell temperature for debugging
             'temp_correction': temp_correction  # Temperature correction factor for debugging

@@ -64,7 +64,7 @@ def main():
         
         # Determine color based on accuracy ratio
         if accuracy_ratio > 85:
-            metrics_color = "rgb(34, 139, 34)"  # Green for high accuracy
+            metrics_color = "rgb(25, 52, 40)"   # Dark green for high accuracy
         elif accuracy_ratio > 50:
             metrics_color = "rgb(84, 52, 19)"   # Brown for medium accuracy
         else:

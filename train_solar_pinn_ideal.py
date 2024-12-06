@@ -1,43 +1,30 @@
 import torch
 import numpy as np
-from solar_pinn_ideal import SolarPINNIdeal, SolarPINNTrainer
+from solar_pinn_ideal import SolarPINN, PINNTrainer
 
 def generate_training_data(n_samples=1000, validation_split=0.2):
     """Generate synthetic training data for ideal clear sky conditions."""
     # Generate random input parameters
     latitude = torch.rand(n_samples) * 180 - 90  # -90 to 90 degrees
+    longitude = torch.rand(n_samples) * 360 - 180  # -180 to 180 degrees
     time = torch.rand(n_samples) * 24  # 0 to 24 hours
-    day_of_year = torch.rand(n_samples) * 365 + 1  # 1 to 365
     slope = torch.rand(n_samples) * 45  # 0 to 45 degrees slope
+    aspect = torch.rand(n_samples) * 360  # 0 to 360 degrees aspect
     
     # Create input tensor
-    x_data = torch.stack([latitude, time, day_of_year, slope], dim=1).float()
+    x_data = torch.stack([latitude, longitude, time, slope, aspect], dim=1).float()
     
     # Calculate theoretical clear-sky irradiance for targets
-    model = SolarPINNIdeal()
+    model = SolarPINN()
     with torch.no_grad():
-        y_data = model.calculate_clear_sky_irradiance(
-            model.calculate_zenith_angle(
-                latitude,
-                model.calculate_declination(day_of_year),
-                model.calculate_hour_angle(time)
-            ),
-            model.calculate_air_mass(
-                model.calculate_zenith_angle(
-                    latitude,
-                    model.calculate_declination(day_of_year),
-                    model.calculate_hour_angle(time)
-                )
-            ),
-            model.calculate_surface_factor(
-                model.calculate_zenith_angle(
-                    latitude,
-                    model.calculate_declination(day_of_year),
-                    model.calculate_hour_angle(time)
-                ),
-                slope
-            )
-        ).reshape(-1, 1).float()
+        y_data = model.calculate_max_possible_irradiance(
+            latitude, time
+        ) * model.calculate_atmospheric_transmission(
+            latitude, time
+        ) * model.calculate_surface_orientation_factor(
+            latitude, longitude, time, slope, aspect
+        )
+        y_data = y_data.reshape(-1, 1).float()
     
     # Split into train and validation sets
     n_val = int(n_samples * validation_split)
@@ -54,8 +41,8 @@ def main():
     torch.manual_seed(42)
     
     # Create model and trainer
-    model = SolarPINNIdeal()
-    trainer = SolarPINNTrainer(model)
+    model = SolarPINN()
+    trainer = PINNTrainer(model)
     
     # Generate training and validation data
     x_train, y_train, x_val, y_val = generate_training_data()
@@ -84,21 +71,15 @@ def main():
             x_batch = x_train[batch_indices]
             y_batch = y_train[batch_indices]
             
-            loss, metrics = trainer.train_step(x_batch, y_batch)
+            loss = trainer.train_step(x_batch, y_batch)
             epoch_loss += loss
         
         avg_train_loss = epoch_loss / n_batches
         
         # Validation
         model.eval()
-        val_loss, val_metrics = trainer.train_step(x_val, y_val, validation=True)
-        
-        # Store metrics
-        trainer.metrics['train_loss'].append(avg_train_loss)
-        trainer.metrics['val_loss'].append(val_loss)
-        trainer.metrics['rmse'].append(val_metrics['rmse'])
-        trainer.metrics['mae'].append(val_metrics['mae'])
-        trainer.metrics['r2'].append(val_metrics['r2'])
+        with torch.no_grad():
+            val_loss = trainer.train_step(x_val, y_val)
         
         # Early stopping check
         if val_loss < best_val_loss:
@@ -108,7 +89,6 @@ def main():
             torch.save({
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': trainer.optimizer.state_dict(),
-                'metrics': trainer.metrics,
                 'epoch': epoch
             }, 'best_solar_pinn_ideal.pth')
         else:
@@ -121,9 +101,6 @@ def main():
         if (epoch + 1) % 5 == 0:  # Print more frequently
             print(f"\nEpoch [{epoch+1}/{n_epochs}]")
             print(f"Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}")
-            print(f"RMSE: {val_metrics['rmse']:.4f} W/m²")
-            print(f"MAE: {val_metrics['mae']:.4f} W/m²")
-            print(f"R²: {val_metrics['r2']:.4f}")
             
             # Print example predictions
             with torch.no_grad():
@@ -135,10 +112,6 @@ def main():
                     print(f"Pred: {y_sample[i].item():.2f} W/m², True: {y_true[i].item():.2f} W/m²")
     
     print("Training completed!")
-    print("Final validation metrics:")
-    print(f"RMSE: {trainer.metrics['rmse'][-1]:.4f}")
-    print(f"MAE: {trainer.metrics['mae'][-1]:.4f}")
-    print(f"R²: {trainer.metrics['r2'][-1]:.4f}")
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,132 @@
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class PhysicsInformedLayer(nn.Module):
+    """Custom layer with physics constraints."""
+    def __init__(self, in_features, out_features):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features)
+        self.physics_weights = nn.Parameter(torch.randn(out_features))
+
+    def forward(self, x):
+        out = self.linear(x)
+        out = out * torch.sigmoid(self.physics_weights)  # Physics-based transformation
+        return out
+
+
+class SolarPINN(nn.Module):
+    def __init__(self, input_dim=5):
+        super().__init__()
+        self.setup_physical_constants()
+        self.setup_network(input_dim)
+    
+    def setup_physical_constants(self):
+        """Set up physical constants and parameters."""
+        # Universal constants
+        self.solar_constant = 1367.0  # W/m²
+        self.stefan_boltzmann = 5.67e-8  # W/m²K⁴
+        
+        # Ideal atmospheric parameters
+        self.atmospheric_extinction = 0.1  # Idealized extinction coefficient
+
+    def setup_network(self, input_dim):
+        """Setup neural network architecture."""
+        self.physics_net = nn.Sequential(
+            PhysicsInformedLayer(input_dim, 128),
+            nn.Tanh(),
+            PhysicsInformedLayer(128, 256),
+            nn.Tanh(),
+            PhysicsInformedLayer(256, 128),
+            nn.Tanh(),
+            PhysicsInformedLayer(128, 1)
+        )
+
+    def forward(self, x):
+        prediction = self.physics_net(x)
+        prediction = self.apply_physical_constraints(x, prediction)
+        return prediction
+
+    def apply_physical_constraints(self, x, prediction):
+        """Apply physical constraints to predictions."""
+        lat, lon, time, slope, aspect = x.split(1, dim=1)
+        max_possible = self.calculate_max_possible_irradiance(lat, time)
+        atmospheric_transmission = self.calculate_atmospheric_transmission(lat, time)
+        surface_factor = self.calculate_surface_orientation_factor(lat, lon, time, slope, aspect)
+        physically_constrained = prediction * torch.min(max_possible, atmospheric_transmission * surface_factor)
+        return torch.clamp(physically_constrained, min=0.0)  # Ensure non-negative irradiance
+    
+    def calculate_max_possible_irradiance(self, lat, time):
+        """Calculate maximum possible irradiance."""
+        declination = 23.45 * torch.sin(2 * torch.pi * (time - 81) / 365)
+        cos_zenith = torch.sin(torch.deg2rad(lat)) * torch.sin(torch.deg2rad(declination)) + \
+                     torch.cos(torch.deg2rad(lat)) * torch.cos(torch.deg2rad(declination))
+        return self.solar_constant * torch.clamp(cos_zenith, min=0.0)
+    
+    def calculate_atmospheric_transmission(self, lat, time):
+        """Calculate atmospheric transmission using air mass."""
+        air_mass = 1 / (torch.cos(torch.deg2rad(lat)) + 0.50572 * (96.07995 - lat)**-1.6364)
+        return torch.exp(-self.atmospheric_extinction * air_mass)
+
+    def calculate_surface_orientation_factor(self, lat, lon, time, slope, aspect):
+        """Calculate surface orientation factor."""
+        # Convert angles to radians
+        slope_rad = torch.deg2rad(slope)
+        aspect_rad = torch.deg2rad(aspect)
+
+        # Solar position calculations
+        declination = 23.45 * torch.sin(2 * torch.pi * (time - 81) / 365)
+        declination_rad = torch.deg2rad(declination)
+        hour_angle = 2 * torch.pi * (time / 24 - 0.5)
+
+        # Calculate zenith angle
+        cos_zenith = torch.sin(torch.deg2rad(lat)) * torch.sin(declination_rad) + \
+                     torch.cos(torch.deg2rad(lat)) * torch.cos(declination_rad) * torch.cos(hour_angle)
+
+        # Surface orientation factor
+        surface_factor = torch.cos(slope_rad) * cos_zenith + \
+                         torch.sin(slope_rad) * torch.sqrt(1 - cos_zenith**2) * \
+                         torch.cos(aspect_rad - hour_angle)
+        return torch.clamp(surface_factor, min=0.0)
+
+    def boundary_conditions(self, x):
+        """Boundary conditions for sunrise and sunset."""
+        lat, _, time, _, _ = x.split(1, dim=1)
+        declination = 23.45 * torch.sin(2 * torch.pi * (time - 81) / 365)
+        declination_rad = torch.deg2rad(declination)
+
+        # Sunrise and sunset hour angles
+        hour_angle = torch.acos(-torch.tan(torch.deg2rad(lat)) * torch.tan(declination_rad))
+        sunrise = 12 - torch.rad2deg(hour_angle) / 15
+        sunset = 12 + torch.rad2deg(hour_angle) / 15
+
+        return sunrise, sunset
+
+
+class PINNTrainer:
+    def __init__(self, model, learning_rate=0.001):
+        self.model = model
+        self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    def train_step(self, x_data, y_data):
+        self.optimizer.zero_grad()
+
+        # Forward pass
+        y_pred = self.model(x_data)
+
+        # Loss
+        data_loss = F.mse_loss(y_pred, y_data)
+
+        # Boundary conditions
+        sunrise, sunset = self.model.boundary_conditions(x_data)
+        night_condition = ((x_data[:, 2] < sunrise) | (x_data[:, 2] > sunset)).float()
+        bc_loss = torch.mean(night_condition * y_pred**2)  # Nighttime irradiance should be zero
+
+        # Total loss
+        total_loss = data_loss + bc_loss
+
+        # Backward pass
+        total_loss.backward()
+        self.optimizer.step()
+        return total_loss.item()

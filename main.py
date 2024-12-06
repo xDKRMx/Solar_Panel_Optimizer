@@ -70,32 +70,74 @@ def main():
         else:
             metrics_color = "#ff4444"  # Red
         
-        # Display accuracy metrics with dynamic styling
+        # Calculate additional metrics
+        mae = abs(predicted_irradiance - physics_irradiance)
+        rmse = (predicted_irradiance - physics_irradiance) ** 2
+        
+        # Display accuracy metrics with enhanced styling
         st.markdown("""
             <style>
-            .metrics-box {
-                padding: 10px;
+            .metrics-container {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                margin: 15px 0;
+            }
+            .metric-box {
+                flex: 1;
+                min-width: 200px;
+                padding: 15px;
                 border-radius: 10px;
-                margin: 10px 0;
+                background: linear-gradient(145deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
+                backdrop-filter: blur(10px);
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             }
-            .metrics-content {
-                margin: 0;
-                font-size: 0.9em;
-            }
-            .metrics-header {
-                margin: 0 0 8px 0;
+            .metric-header {
                 font-size: 1.1em;
                 font-weight: bold;
+                margin-bottom: 10px;
+                color: #ffffff;
+            }
+            .metric-value {
+                font-size: 1.4em;
+                font-weight: bold;
+                margin: 5px 0;
+            }
+            .metric-label {
+                font-size: 0.9em;
+                color: #cccccc;
+            }
+            .performance-indicator {
+                display: inline-block;
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                margin-right: 8px;
             }
             </style>
         """, unsafe_allow_html=True)
         
+        # Create performance indicator colors
+        performance_color = "#1b4332" if accuracy_ratio > 85 else "#ffaa00" if accuracy_ratio > 70 else "#ff4444"
+        
         st.markdown(f"""
-            <div class='metrics-box' style='background-color: {metrics_color};'>
-                <div class='metrics-content'>
-                    <p class='metrics-header'>Accuracy Metrics</p>
-                    <p>Accuracy Ratio: {accuracy_ratio:.2f}%</p>
-                    <p>Relative Error: {relative_error:.2f}%</p>
+            <div class="metrics-container">
+                <div class="metric-box">
+                    <div class="metric-header">
+                        <span class="performance-indicator" style="background-color: {performance_color};"></span>
+                        Overall Accuracy
+                    </div>
+                    <div class="metric-value">{accuracy_ratio:.2f}%</div>
+                    <div class="metric-label">Model-Physics Agreement</div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-header">Error Metrics</div>
+                    <div class="metric-value">{relative_error:.2f}%</div>
+                    <div class="metric-label">Relative Error</div>
+                    <div class="metric-value">{mae:.2f} W/m²</div>
+                    <div class="metric-label">Mean Absolute Error</div>
+                    <div class="metric-value">{rmse**.5:.2f} W/m²</div>
+                    <div class="metric-label">Root Mean Square Error</div>
                 </div>
             </div>
         """, unsafe_allow_html=True)

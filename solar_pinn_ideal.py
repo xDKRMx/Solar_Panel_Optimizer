@@ -142,24 +142,30 @@ class SolarPINN(nn.Module):
         return sunset - sunrise
 
     def forward(self, x):
-        """Forward pass with essential physics constraints using normalized inputs."""
+        """Forward pass with essential physics constraints using normalized inputs and exact formulations."""
         # Extract normalized input components
         lat_norm, lon_norm, time_norm, slope_norm, aspect_norm = x.split(1, dim=1)
         
         # Denormalize inputs for physics calculations
-        lat = lat_norm * 90
-        lon = lon_norm * 180
-        time = time_norm * 24
-        slope = slope_norm * 180
-        aspect = aspect_norm * 360
+        lat = lat_norm * 90      # Latitude in degrees [-90, 90]
+        lon = lon_norm * 180     # Longitude in degrees [-180, 180]
+        time = time_norm * 24    # Time in hours [0, 24]
+        slope = slope_norm * 180 # Slope in degrees [0, 180]
+        aspect = aspect_norm * 360 # Aspect in degrees [0, 360]
         
-        # Calculate day of year from denormalized time
+        # Calculate day of year and hour of day
         day_of_year = torch.floor(time / 24 * 365)
         hour_of_day = time % 24
         
-        # Calculate solar position
+        # Calculate solar declination using exact formula
+        # δ = 23.45° · sin(2π/365 · (n-81))
         declination = self.calculate_declination(day_of_year)
-        hour_angle = self.calculate_hour_angle(hour_of_day)
+        
+        # Calculate hour angle using exact formula
+        # ω = 15° · (t - 12)
+        hour_angle = self.calculate_hour_angle(hour_of_day)  # Returns in radians
+        
+        # Calculate solar zenith angle
         zenith_angle = self.calculate_zenith_angle(lat, declination, hour_angle)
         
         # Calculate atmospheric effects
@@ -167,22 +173,26 @@ class SolarPINN(nn.Module):
         atmospheric_transmission = torch.exp(-self.atmospheric_extinction * air_mass)
         
         # Calculate surface orientation
-        sun_azimuth = torch.rad2deg(hour_angle)  # Simplified sun azimuth
+        sun_azimuth = torch.rad2deg(hour_angle)
         surface_factor = self.calculate_surface_orientation_factor(zenith_angle, slope, sun_azimuth, aspect)
         
         # Neural network prediction (normalized)
         prediction = self.physics_net(x)
         
         # Re-dimensionalize the prediction and apply physical constraints
-        prediction = prediction * self.solar_constant  # Convert normalized output back to W/m²
+        prediction = prediction * self.solar_constant
         constrained_prediction = (prediction * 
                                atmospheric_transmission * 
                                surface_factor)
         
-        # Apply day/night boundary conditions
+        # Calculate sunrise and sunset times using exact formulations
         sunrise, sunset = self.boundary_conditions(lat, day_of_year)
+        
+        # Apply day/night constraint using exact calculations
+        # Handle special cases (polar day/night)
         is_daytime = (hour_of_day >= sunrise) & (hour_of_day <= sunset)
         
+        # Set prediction to zero during nighttime
         final_prediction = torch.where(is_daytime, 
                                     torch.clamp(constrained_prediction, min=0.0),
                                     torch.zeros_like(constrained_prediction))

@@ -7,16 +7,13 @@ class PhysicsInformedLayer(nn.Module):
     def __init__(self, in_features, out_features):
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
-        # Initialize weights with Kaiming initialization for ReLU
-        nn.init.kaiming_uniform_(self.linear.weight, nonlinearity='relu')
-        self.linear.bias.data.fill_(0.1)
-        # Initialize physics weights with small positive values for stability
-        self.physics_weights = nn.Parameter(0.1 * torch.ones(out_features))
+        # Initialize weights with consideration for solar physics
+        self.physics_weights = nn.Parameter(torch.ones(out_features) * 0.5)
 
     def forward(self, x):
         out = self.linear(x)
-        # Apply ReLU for positive outputs and scale with physics weights
-        out = F.relu(out) * self.physics_weights
+        # Ensure positive output through physics-based transformation
+        out = out * torch.sigmoid(self.physics_weights)
         return out
 
 class SolarPINN(nn.Module):
@@ -24,19 +21,6 @@ class SolarPINN(nn.Module):
         super().__init__()
         self.setup_physical_constants()
         self.setup_network(input_dim)
-        
-    def normalize_inputs(self, x):
-        """Normalize each input dimension."""
-        lat = x[:, 0] / 90.0  # -1 to 1
-        lon = x[:, 1] / 180.0  # -1 to 1
-        time = x[:, 2] / 24.0  # 0 to 1
-        slope = x[:, 3] / 90.0  # 0 to 1
-        aspect = x[:, 4] / 360.0  # 0 to 1
-        return torch.stack([lat, lon, time, slope, aspect], dim=1)
-        
-    def denormalize_output(self, y):
-        """Scale back to physical units (W/m²)."""
-        return y * self.solar_constant
     
     def setup_physical_constants(self):
         """Set up essential physical constants for ideal conditions."""
@@ -44,22 +28,15 @@ class SolarPINN(nn.Module):
         self.atmospheric_extinction = 0.1  # Idealized clear-sky extinction coefficient
 
     def setup_network(self, input_dim):
-        """Setup neural network architecture with batch normalization."""
+        """Setup neural network architecture."""
         self.physics_net = nn.Sequential(
-            PhysicsInformedLayer(input_dim, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
-            PhysicsInformedLayer(256, 512),
-            nn.BatchNorm1d(512),
-            nn.ReLU(),
-            PhysicsInformedLayer(512, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
+            PhysicsInformedLayer(input_dim, 128),
+            nn.Tanh(),
+            PhysicsInformedLayer(128, 256),
+            nn.Tanh(),
             PhysicsInformedLayer(256, 128),
-            nn.BatchNorm1d(128),
-            nn.ReLU(),
-            PhysicsInformedLayer(128, 1),
-            nn.Sigmoid()  # Ensure output is between 0 and 1 for normalization
+            nn.Tanh(),
+            PhysicsInformedLayer(128, 1)
         )
 
     def calculate_declination(self, day_of_year):
@@ -108,15 +85,9 @@ class SolarPINN(nn.Module):
         return sunrise, sunset
 
     def forward(self, x):
-        """Forward pass with essential physics constraints and normalization."""
+        """Forward pass with essential physics constraints."""
         # Extract input components
         lat, lon, time, slope, aspect = x.split(1, dim=1)
-        
-        # Normalize inputs
-        x_normalized = self.normalize_inputs(x)
-        
-        # Neural network prediction (0-1 range)
-        prediction = self.physics_net(x_normalized)
         
         # Calculate day of year from time (assuming time includes day information)
         day_of_year = torch.floor(time / 24 * 365)
@@ -135,8 +106,14 @@ class SolarPINN(nn.Module):
         sun_azimuth = torch.rad2deg(hour_angle)  # Simplified sun azimuth
         surface_factor = self.calculate_surface_orientation_factor(zenith_angle, slope, sun_azimuth, aspect)
         
-        # Apply physical constraints and denormalize
-        constrained_prediction = self.denormalize_output(prediction) * atmospheric_transmission * surface_factor
+        # Neural network prediction
+        prediction = self.physics_net(x)
+        
+        # Apply physical constraints
+        constrained_prediction = (prediction * 
+                                atmospheric_transmission * 
+                                surface_factor * 
+                                self.solar_constant)
         
         # Apply day/night boundary conditions
         sunrise, sunset = self.boundary_conditions(lat, day_of_year)
@@ -159,10 +136,8 @@ class PINNTrainer:
             # Forward pass with gradient computation
             y_pred = self.model(x_data)
             
-            # Calculate data loss with L1 component for better stability
-            mse_loss = F.mse_loss(y_pred, y_data)
-            l1_loss = F.l1_loss(y_pred, y_data)
-            data_loss = 0.8 * mse_loss + 0.2 * l1_loss
+            # Calculate data loss
+            data_loss = F.mse_loss(y_pred, y_data)
             
             # Extract time components for boundary conditions
             lat = x_data[:, 0]
@@ -170,23 +145,22 @@ class PINNTrainer:
             day_of_year = torch.floor(time / 24 * 365)
             hour_of_day = time % 24
             
-            # Calculate physics loss
+            # Calculate physics loss with retain_graph
             sunrise, sunset = self.model.boundary_conditions(lat, day_of_year)
             night_mask = (hour_of_day < sunrise) | (hour_of_day > sunset)
             physics_loss = torch.mean(y_pred[night_mask] ** 2)  # Should be zero at night
             
-            # Combined loss with adaptive weighting
-            physics_weight = min(0.5, 0.1 * (1 + torch.exp(-data_loss)).item())
-            total_loss = data_loss + physics_weight * physics_loss
+            # Combined loss
+            total_loss = data_loss + 0.1 * physics_loss
             
-            # Backward pass
-            total_loss.backward()
-            
-            # Gradient clipping for stability
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            # Backward pass with retain_graph=True for the first backward
+            total_loss.backward(retain_graph=True)
             
             # Optimizer step
             self.optimizer.step()
+            
+            # Clear computation graph
+            self.optimizer.zero_grad()
             
             return total_loss.item()
         except Exception as e:

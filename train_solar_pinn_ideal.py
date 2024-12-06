@@ -47,15 +47,15 @@ def main():
     
     # Create model and trainer
     model = SolarPINN()
-    trainer = PINNTrainer(model, learning_rate=0.0005)
+    trainer = PINNTrainer(model)
     physics_model = SolarPhysicsIdeal()
     
     # Generate training and validation data
     x_train, y_train, x_val, y_val = generate_training_data()
     
     # Training parameters
-    n_epochs = 500
-    batch_size = 64
+    n_epochs = 200
+    batch_size = 32
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')
     patience = 20

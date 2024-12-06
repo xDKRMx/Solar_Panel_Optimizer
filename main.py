@@ -95,6 +95,35 @@ def main():
             label_visibility="collapsed"
         )
     
+    # Panel Parameters section
+    st.sidebar.subheader("Panel Parameters")
+    
+    # Panel Slope input with slider and number input
+    slope_col1, slope_col2 = st.sidebar.columns([3, 1])
+    with slope_col1:
+        slope = st.slider("Panel Slope", 0.0, 90.0, 30.0,
+            key='slope_slider'
+        )
+    with slope_col2:
+        st.write("")  # Add small spacing
+        slope = st.number_input("", 0.0, 90.0, 30.0,
+            key='slope_input',
+            label_visibility="collapsed"
+        )
+    
+    # Panel Aspect input with slider and number input
+    aspect_col1, aspect_col2 = st.sidebar.columns([3, 1])
+    with aspect_col1:
+        aspect = st.slider("Panel Aspect", 0.0, 360.0, 180.0,
+            key='aspect_slider'
+        )
+    with aspect_col2:
+        st.write("")  # Add small spacing
+        aspect = st.number_input("", 0.0, 360.0, 180.0,
+            key='aspect_input',
+            label_visibility="collapsed"
+        )
+    
     # Update session state when values change
     if latitude != st.session_state.get('latitude'):
         st.session_state['latitude'] = latitude
@@ -130,8 +159,8 @@ def main():
         with torch.no_grad():
             current_input = torch.tensor([[
                 latitude/90, longitude/180, 
-                hour/24, 0/180,  # Default slope
-                180/360  # Default aspect (south-facing)
+                hour/24, slope/180,  # Use actual slope instead of default 0
+                aspect/360  # Use actual aspect instead of default 180
             ]]).float()
             predicted_irradiance = model(current_input).item() * model.solar_constant
         

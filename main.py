@@ -40,13 +40,14 @@ def main():
     st.sidebar.subheader("Location Parameters")
     
     # Latitude input with slider and number input
-    lat_col1, lat_col2 = st.sidebar.columns([2, 1])
+    lat_col1, lat_col2 = st.sidebar.columns([3, 1])
     with lat_col1:
         latitude = st.slider("Latitude", -90.0, 90.0,
             value=float(st.session_state.get('latitude', 45.0)),
             key='latitude_slider'
         )
     with lat_col2:
+        st.write("")  # Add small spacing
         latitude = st.number_input("", -90.0, 90.0,
             value=float(st.session_state.get('latitude', 45.0)),
             key='latitude_input',
@@ -54,13 +55,14 @@ def main():
         )
     
     # Longitude input with slider and number input
-    lon_col1, lon_col2 = st.sidebar.columns([2, 1])
+    lon_col1, lon_col2 = st.sidebar.columns([3, 1])
     with lon_col1:
         longitude = st.slider("Longitude", -180.0, 180.0,
             value=float(st.session_state.get('longitude', 0.0)),
             key='longitude_slider'
         )
     with lon_col2:
+        st.write("")  # Add small spacing
         longitude = st.number_input("", -180.0, 180.0,
             value=float(st.session_state.get('longitude', 0.0)),
             key='longitude_input',
@@ -68,24 +70,26 @@ def main():
         )
     
     # Day of Year input with slider and number input
-    day_col1, day_col2 = st.sidebar.columns([2, 1])
+    day_col1, day_col2 = st.sidebar.columns([3, 1])
     with day_col1:
         day_of_year = st.slider("Day of Year", 1, 365, 182,
             key='day_slider'
         )
     with day_col2:
+        st.write("")  # Add small spacing
         day_of_year = st.number_input("", 1, 365, 182,
             key='day_input',
             label_visibility="collapsed"
         )
     
     # Hour of Day input with slider and number input
-    hour_col1, hour_col2 = st.sidebar.columns([2, 1])
+    hour_col1, hour_col2 = st.sidebar.columns([3, 1])
     with hour_col1:
         hour = st.slider("Hour of Day", 0.0, 24.0, 12.0, 0.1,
             key='hour_slider'
         )
     with hour_col2:
+        st.write("")  # Add small spacing
         hour = st.number_input("", 0.0, 24.0, 12.0, 0.1,
             key='hour_input',
             label_visibility="collapsed"

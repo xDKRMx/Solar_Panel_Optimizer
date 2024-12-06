@@ -28,13 +28,16 @@ class SolarPINN(nn.Module):
         self.atmospheric_extinction = 0.1  # Idealized clear-sky extinction coefficient
 
     def setup_network(self, input_dim):
-        """Setup neural network architecture."""
+        """Setup neural network architecture with batch normalization."""
         self.physics_net = nn.Sequential(
             PhysicsInformedLayer(input_dim, 128),
+            nn.BatchNorm1d(128),
             nn.Tanh(),
             PhysicsInformedLayer(128, 256),
+            nn.BatchNorm1d(256),
             nn.Tanh(),
             PhysicsInformedLayer(256, 128),
+            nn.BatchNorm1d(128),
             nn.Tanh(),
             PhysicsInformedLayer(128, 1)
         )
@@ -136,7 +139,12 @@ class SolarPINN(nn.Module):
 class PINNTrainer:
     def __init__(self, model, learning_rate=0.001):
         self.model = model
-        self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        # Add L2 regularization with weight decay
+        self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
+        # More aggressive learning rate scheduler
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode='min', factor=0.2, patience=5, verbose=True
+        )
 
     def train_step(self, x_data, y_data):
         self.optimizer.zero_grad()
@@ -158,14 +166,20 @@ class PINNTrainer:
         night_mask = (hour_of_day < sunrise) | (hour_of_day > sunset)
         physics_loss = torch.mean(y_pred[night_mask] ** 2)
         
-        # Combined loss with retain_graph
-        total_loss = data_loss + 0.1 * physics_loss
+        # Combined loss with increased physics weight
+        total_loss = data_loss + 0.5 * physics_loss
         
         # Backward pass with retain_graph
         total_loss.backward(retain_graph=True)
         
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        
         # Optimizer step
         self.optimizer.step()
+        
+        # Update learning rate scheduler
+        self.scheduler.step(total_loss)
         
         # Clean up graphs
         for param in self.model.parameters():

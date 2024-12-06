@@ -65,7 +65,7 @@ def main():
     
     # Training parameters
     n_epochs = 200
-    batch_size = 32
+    batch_size = 64  # Increased batch size
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')
     patience = 20
@@ -125,21 +125,23 @@ def main():
             print(f"Early stopping triggered at epoch {epoch+1}")
             break
         
-        if (epoch + 1) % 5 == 0:  # Print more frequently
-            print(f"\nEpoch [{epoch+1}/{n_epochs}]")
-            print(f"Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}")
-            print(f"Validation Metrics:")
-            print(f"MAE: {val_metrics['mae']:.2f} W/m²")
-            print(f"RMSE: {val_metrics['rmse']:.2f} W/m²")
-            print(f"R²: {val_metrics['r2']:.4f}")
-            
-            # Print example predictions
-            sample_idx = torch.randint(0, len(x_val), (5,))
+        # Print every epoch
+        print(f"\nEpoch [{epoch+1}/{n_epochs}]")
+        print(f"Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}")
+        print(f"Validation Metrics:")
+        print(f"MAE: {val_metrics['mae']:.4f}")
+        print(f"RMSE: {val_metrics['rmse']:.4f}")
+        print(f"R²: {val_metrics['r2']:.4f}")
+        print(f"MAPE: {val_metrics['mape']:.2f}%")
+        print(f"Energy Conservation Error: {val_metrics['energy_conservation_error']:.4f}")
+        
+        if (epoch + 1) % 5 == 0:  # Print detailed predictions every 5 epochs
+            sample_idx = torch.randint(0, len(x_val), (3,))
             y_sample = model(x_val[sample_idx])
             y_true = y_val[sample_idx]
             print("\nSample Predictions vs True Values:")
-            for i in range(5):
-                print(f"Pred: {y_sample[i].item():.2f} W/m², True: {y_true[i].item():.2f} W/m²")
+            for i in range(3):
+                print(f"Pred: {y_sample[i].item():.4f}, True: {y_true[i].item():.4f}")
     
     print("Training completed!")
 

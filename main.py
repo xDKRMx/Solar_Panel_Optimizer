@@ -132,58 +132,55 @@ def main():
         """, unsafe_allow_html=True)
         
         # Create 3D visualization
+        plot_container = st.container()
         if st.button("Generate 3D Surface Plot"):
-            with st.spinner("Generating visualization..."):
-                try:
-                    fig, metrics = create_surface_plot(model, st.session_state.get('latitude', latitude), 
-                                                     st.session_state.get('longitude', longitude), hour)
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Display optimal parameters in green box
-                    st.markdown(f"""
-                        <div class='accuracy-box'>
-                            <h3>Optimal Parameters:</h3>
-                            <ul>
-                                <li>Slope: {metrics['optimal_slope']:.1f}°</li>
-                                <li>Aspect: {metrics['optimal_aspect']:.1f}°</li>
-                                <li>Expected Efficiency: {metrics['max_efficiency']:.3f}</li>
-                            </ul>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                except Exception as e:
-                    st.error(f"Error generating visualization: {str(e)}")
-        
-        # Show interactive map after predictions if button is clicked
-        if st.session_state.show_map:
-            st.subheader("Select Location on Map")
-            
-            # Initialize the map centered on the current location
-            m = folium.Map(
-                location=[latitude, longitude],
-                zoom_start=3,
-                tiles="OpenStreetMap"
-            )
-            
-            # Add a marker for the current location
-            folium.Marker(
-                [st.session_state.get('latitude', latitude), 
-                 st.session_state.get('longitude', longitude)],
-                popup="Selected Location",
-                icon=folium.Icon(color="red", icon="info-sign"),
-            ).add_to(m)
-            
-            # Display the map and get clicked coordinates
-            map_data = st_folium(m, height=400, width=700, key="map")
-            
-            if map_data['last_clicked'] is not None:
-                st.session_state['latitude'] = map_data['last_clicked']['lat']
-                st.session_state['longitude'] = map_data['last_clicked']['lng']
-                st.success(f"Location selected: {st.session_state['latitude']:.4f}°, {st.session_state['longitude']:.4f}°")
-                st.rerun()
+            with plot_container:
+                with st.spinner("Generating visualization..."):
+                    try:
+                        fig, metrics = create_surface_plot(model, st.session_state.get('latitude', latitude), 
+                                                       st.session_state.get('longitude', longitude), hour)
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.markdown(f'''
+                            <div class='accuracy-box'>
+                                <h3>Optimal Parameters:</h3>
+                                <ul>
+                                    <li>Slope: {metrics['optimal_slope']:.1f}°</li>
+                                    <li>Aspect: {metrics['optimal_aspect']:.1f}°</li>
+                                    <li>Expected Efficiency: {metrics['max_efficiency']:.3f}</li>
+                                </ul>
+                            </div>
+                        ''', unsafe_allow_html=True)
+                        
+                    except Exception as e:
+                        st.error(f"Error generating visualization: {str(e)}")
                 
     except Exception as e:
         st.error(f"Error calculating predictions: {str(e)}")
+
+    # Show interactive map after predictions if button is clicked
+    if st.session_state.show_map:
+        st.subheader("Select Location on Map")
+        m = folium.Map(
+            location=[latitude, longitude],
+            zoom_start=3,
+            tiles="OpenStreetMap"
+        )
+        
+        folium.Marker(
+            [st.session_state.get('latitude', latitude), 
+             st.session_state.get('longitude', longitude)],
+            popup="Selected Location",
+            icon=folium.Icon(color="red", icon="info-sign"),
+        ).add_to(m)
+        
+        map_data = st_folium(m, height=400, width=700, key="map")
+        
+        if map_data['last_clicked'] is not None:
+            st.session_state['latitude'] = map_data['last_clicked']['lat']
+            st.session_state['longitude'] = map_data['last_clicked']['lng']
+            st.success(f"Location selected: {st.session_state['latitude']:.4f}°, {st.session_state['longitude']:.4f}°")
+            st.rerun()
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,103 @@
+import numpy as np
+
+class SolarPhysicsIdeal:
+    def __init__(self):
+        # Universal physical constants
+        self.solar_constant = 1367.0  # Solar constant, S (W/m²)
+        self.extinction_coefficient = 0.1  # Idealized extinction coefficient for clear sky
+
+    def calculate_declination(self, day_of_year):
+        """
+        Calculate the solar declination angle (δ) for a given day of the year.
+        """
+        declination = 23.45 * np.sin(2 * np.pi * (day_of_year - 81) / 365)
+        return np.radians(declination)
+
+    def calculate_zenith_angle(self, latitude, declination, hour_angle):
+        """
+        Calculate the cosine of the solar zenith angle (cos θz).
+        """
+        latitude_rad = np.radians(latitude)
+        return (
+            np.sin(latitude_rad) * np.sin(declination) +
+            np.cos(latitude_rad) * np.cos(declination) * np.cos(hour_angle)
+        )
+
+    def calculate_air_mass(self, zenith_angle):
+        """
+        Calculate air mass (M) using the Kasten and Young model.
+        """
+        zenith_angle_deg = np.degrees(np.arccos(zenith_angle))
+        air_mass = 1 / (np.cos(np.radians(zenith_angle_deg)) + 
+                        0.50572 * (96.07995 - zenith_angle_deg) ** -1.6364)
+        return air_mass
+
+    def calculate_atmospheric_transmission(self, air_mass):
+        """
+        Calculate the atmospheric transmission factor (T).
+        """
+        return np.exp(-self.extinction_coefficient * air_mass)
+
+    def calculate_surface_orientation_factor(self, zenith_angle, slope, sun_azimuth, panel_azimuth):
+        """
+        Calculate the surface orientation factor (f_surf).
+        """
+        slope_rad = np.radians(slope)
+        sun_azimuth_rad = np.radians(sun_azimuth)
+        panel_azimuth_rad = np.radians(panel_azimuth)
+
+        return (
+            np.cos(slope_rad) * zenith_angle +
+            np.sin(slope_rad) * np.sqrt(1 - zenith_angle ** 2) *
+            np.cos(sun_azimuth_rad - panel_azimuth_rad)
+        )
+
+    def calculate_hour_angle(self, time):
+        """
+        Calculate the hour angle (h) based on the time of day.
+        """
+        return np.radians(15 * (time - 12))
+
+    def calculate_irradiance(self, latitude, day_of_year, time, slope=0, panel_azimuth=0):
+        """
+        Calculate the total solar irradiance at the surface under ideal conditions.
+        """
+        # Step 1: Calculate solar declination
+        declination = self.calculate_declination(day_of_year)
+
+        # Step 2: Calculate the hour angle
+        hour_angle = self.calculate_hour_angle(time)
+
+        # Step 3: Calculate cosine of the solar zenith angle
+        cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)
+        cos_zenith = np.maximum(cos_zenith, 0.0)  # Ensure no negative values (nighttime)
+
+        # Step 4: Calculate air mass
+        air_mass = self.calculate_air_mass(cos_zenith)
+
+        # Step 5: Calculate atmospheric transmission
+        transmission = self.calculate_atmospheric_transmission(air_mass)
+
+        # Step 6: Calculate surface orientation factor
+        surface_orientation = self.calculate_surface_orientation_factor(
+            cos_zenith, slope, hour_angle, panel_azimuth
+        )
+
+        # Step 7: Calculate irradiance
+        irradiance = self.solar_constant * transmission * surface_orientation
+
+        return np.maximum(irradiance, 0.0)  # Ensure non-negative irradiance
+
+# Example Usage
+if __name__ == "__main__":
+    solar_physics = SolarPhysicsIdeal()
+
+    # Inputs for ideal conditions
+    latitude = 45  # Degrees
+    day_of_year = 172  # June 21st
+    time = 12  # Noon
+    slope = 30  # Panel slope in degrees
+    panel_azimuth = 180  # Facing south
+
+    irradiance = solar_physics.calculate_irradiance(latitude, day_of_year, time, slope, panel_azimuth)
+    print(f"Calculated Solar Irradiance: {irradiance:.2f} W/m²")

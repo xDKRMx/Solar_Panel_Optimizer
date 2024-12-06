@@ -43,7 +43,14 @@ class SolarPINN(nn.Module):
         )
 
     def calculate_declination(self, day_of_year):
-        """Calculate solar declination angle."""
+        """Calculate solar declination angle using exact formulation.
+        
+        Args:
+            day_of_year: Day of year (1-365)
+            
+        Returns:
+            Solar declination angle in radians
+        """
         return torch.deg2rad(23.45 * torch.sin(2 * torch.pi * (day_of_year - 81) / 365))
 
     def calculate_hour_angle(self, time):
@@ -74,18 +81,65 @@ class SolarPINN(nn.Module):
                 torch.cos(sun_azimuth_rad - aspect_rad))
 
     def boundary_conditions(self, lat, day_of_year):
-        """Calculate sunrise and sunset times."""
+        """Calculate sunrise, sunset, and daylight duration using exact formulations.
+        
+        Args:
+            lat: Latitude of location (in degrees)
+            day_of_year: Day of year (1-365)
+            
+        Returns:
+            tuple: (sunrise time, sunset time) in hours (local solar time)
+        """
+        # Calculate solar declination
         declination = self.calculate_declination(day_of_year)
+        
+        # Convert latitude to radians
         lat_rad = torch.deg2rad(lat)
         
+        # Calculate hour angle at sunrise/sunset
+        # cos(h) = -tan(φ)·tan(δ)
         cos_hour_angle = -torch.tan(lat_rad) * torch.tan(declination)
+        
+        # Handle edge cases (polar days/nights)
         cos_hour_angle = torch.clamp(cos_hour_angle, -1, 1)
         
+        # Calculate hour angle in radians
         hour_angle = torch.arccos(cos_hour_angle)
-        sunrise = 12 - torch.rad2deg(hour_angle) / 15
-        sunset = 12 + torch.rad2deg(hour_angle) / 15
+        
+        # Convert to degrees for time calculations
+        hour_angle_deg = torch.rad2deg(hour_angle)
+        
+        # Calculate sunrise and sunset times
+        # Sunrise = 12 - h/15, Sunset = 12 + h/15
+        sunrise = 12 - hour_angle_deg / 15
+        sunset = 12 + hour_angle_deg / 15
+        
+        # Handle special cases
+        is_polar_day = cos_hour_angle < -1
+        is_polar_night = cos_hour_angle > 1
+        
+        # During polar day, sun never sets (24h daylight)
+        sunrise = torch.where(is_polar_day, torch.zeros_like(sunrise), sunrise)
+        sunset = torch.where(is_polar_day, torch.full_like(sunset, 24), sunset)
+        
+        # During polar night, sun never rises (24h darkness)
+        sunrise = torch.where(is_polar_night, torch.full_like(sunrise, float('inf')), sunrise)
+        sunset = torch.where(is_polar_night, torch.full_like(sunset, float('inf')), sunset)
         
         return sunrise, sunset
+
+    def calculate_daylight_duration(self, lat, day_of_year):
+        """Calculate daylight duration using exact formulation.
+        
+        Args:
+            lat: Latitude of location (in degrees)
+            day_of_year: Day of year (1-365)
+            
+        Returns:
+            Daylight duration in hours
+        """
+        sunrise, sunset = self.boundary_conditions(lat, day_of_year)
+        return sunset - sunrise
 
     def forward(self, x):
         """Forward pass with essential physics constraints using normalized inputs."""

@@ -25,81 +25,40 @@ def main():
     # Sidebar inputs
     st.sidebar.header("Parameters")
     
-    # Initialize location state
-    if 'latitude' not in st.session_state:
-        st.session_state.latitude = 45.0
-    if 'longitude' not in st.session_state:
-        st.session_state.longitude = 0.0
-
-    # Create the map
-    st.subheader("Select Location on Map")
-    
-    # Initialize the map centered on the current location
-    m = folium.Map(
-        location=[st.session_state.latitude, st.session_state.longitude],
-        zoom_start=3,
-        tiles="OpenStreetMap"
-    )
-    
-    # Add a marker for the current location
-    folium.Marker(
-        [st.session_state.latitude, st.session_state.longitude],
-        popup="Selected Location",
-        icon=folium.Icon(color="red", icon="info-sign"),
-    ).add_to(m)
-    
-    # Display the map and get clicked coordinates
-    map_data = st_folium(m, height=400, width=700)
-    
-    # Update coordinates if map is clicked
-    if map_data['last_clicked']:
-        st.session_state.latitude = map_data['last_clicked']['lat']
-        st.session_state.longitude = map_data['last_clicked']['lng']
-    
-    # Location parameters with synchronized values
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        st.session_state.latitude = st.number_input(
-            "Latitude",
-            value=st.session_state.latitude,
-            min_value=-90.0,
-            max_value=90.0,
-            step=0.1,
-            format="%.6f"
-        )
-    with col2:
-        st.session_state.longitude = st.number_input(
-            "Longitude",
-            value=st.session_state.longitude,
-            min_value=-180.0,
-            max_value=180.0,
-            step=0.1,
-            format="%.6f"
-        )
+    # Location parameters
+    latitude = st.sidebar.slider("Latitude", -90.0, 90.0, 45.0, 0.1)
+    longitude = st.sidebar.slider("Longitude", -180.0, 180.0, 0.0, 0.1)
     
     # Display current location information
     st.sidebar.markdown(f"""
         **Selected Location:**  
-        Latitude: {st.session_state.latitude:.6f}°  
-        Longitude: {st.session_state.longitude:.6f}°
+        Latitude: {latitude:.6f}°  
+        Longitude: {longitude:.6f}°
     """)
     
     # Time parameters
     day_of_year = st.sidebar.slider("Day of Year", 1, 365, 182)
     hour = st.sidebar.slider("Hour of Day", 0.0, 24.0, 12.0, 0.1)
+
+    # Show Map button in sidebar
+    if 'show_map' not in st.session_state:
+        st.session_state.show_map = False
+    
+    if st.sidebar.button("Show Map" if not st.session_state.show_map else "Hide Map"):
+        st.session_state.show_map = not st.session_state.show_map
     
     # Calculate predictions and metrics
     try:
         with torch.no_grad():
             current_input = torch.tensor([[
-                st.session_state.latitude/90, st.session_state.longitude/180, 
+                latitude/90, longitude/180, 
                 hour/24, 0/180,  # Default slope
                 180/360  # Default aspect (south-facing)
             ]]).float()
             predicted_irradiance = model(current_input).item() * model.solar_constant
         
         # Calculate physics-based irradiance
-        lat_tensor = torch.tensor([st.session_state.latitude], dtype=torch.float32)
+        lat_tensor = torch.tensor([latitude], dtype=torch.float32)
         hour_tensor = torch.tensor([hour], dtype=torch.float32)
         physics_irradiance = physics_model.calculate_irradiance(
             latitude=lat_tensor,
@@ -156,32 +115,59 @@ def main():
                 </div>
             </div>
         """, unsafe_allow_html=True)
+        
+        # Create 3D visualization
+        if st.button("Generate 3D Surface Plot"):
+            with st.spinner("Generating visualization..."):
+                try:
+                    fig, metrics = create_surface_plot(model, st.session_state.get('latitude', latitude), 
+                                                     st.session_state.get('longitude', longitude), hour)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Display optimal parameters in green box
+                    st.markdown(f"""
+                        <div class='accuracy-box'>
+                            <h3>Optimal Parameters:</h3>
+                            <ul>
+                                <li>Slope: {metrics['optimal_slope']:.1f}°</li>
+                                <li>Aspect: {metrics['optimal_aspect']:.1f}°</li>
+                                <li>Expected Efficiency: {metrics['max_efficiency']:.3f}</li>
+                            </ul>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                except Exception as e:
+                    st.error(f"Error generating visualization: {str(e)}")
+        
+        # Show interactive map after predictions if button is clicked
+        if st.session_state.show_map:
+            st.subheader("Select Location on Map")
+            
+            # Initialize the map centered on the current location
+            m = folium.Map(
+                location=[latitude, longitude],
+                zoom_start=3,
+                tiles="OpenStreetMap"
+            )
+            
+            # Add a marker for the current location
+            folium.Marker(
+                [latitude, longitude],
+                popup="Selected Location",
+                icon=folium.Icon(color="red", icon="info-sign"),
+            ).add_to(m)
+            
+            # Display the map and get clicked coordinates
+            map_data = st_folium(m, height=400, width=700)
+            
+            # Update coordinates if map is clicked
+            if map_data['last_clicked']:
+                st.session_state.latitude = map_data['last_clicked']['lat']
+                st.session_state.longitude = map_data['last_clicked']['lng']
+                st.experimental_rerun()
+                
     except Exception as e:
         st.error(f"Error calculating predictions: {str(e)}")
-
-    # Create 3D visualization
-    if st.button("Generate 3D Surface Plot"):
-        with st.spinner("Generating visualization..."):
-            try:
-                
-                # Generate and display the 3D plot
-                fig, metrics = create_surface_plot(model, latitude, longitude, hour)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Display optimal parameters in green box
-                st.markdown(f"""
-                    <div class='accuracy-box'>
-                        <h3>Optimal Parameters:</h3>
-                        <ul>
-                            <li>Slope: {metrics['optimal_slope']:.1f}°</li>
-                            <li>Aspect: {metrics['optimal_aspect']:.1f}°</li>
-                            <li>Expected Efficiency: {metrics['max_efficiency']:.3f}</li>
-                        </ul>
-                    </div>
-                """, unsafe_allow_html=True)
-                
-            except Exception as e:
-                st.error(f"Error generating visualization: {str(e)}")
 
 if __name__ == "__main__":
     main()

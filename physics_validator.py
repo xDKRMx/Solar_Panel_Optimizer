@@ -6,6 +6,7 @@ class SolarPhysicsIdeal:
         # Universal physical constants
         self.solar_constant = 1367.0  # Solar constant, S (W/m²)
         self.extinction_coefficient = 0.1  # Idealized extinction coefficient for clear sky
+        self.reference_efficiency = 0.20  # Reference efficiency at standard test conditions (20%)
 
     def calculate_declination(self, day_of_year):
         """Calculate the solar declination angle (δ) for a given day of the year."""
@@ -68,23 +69,36 @@ class SolarPhysicsIdeal:
         return base_transmission * rayleigh * aerosol * ozone
 
     def calculate_surface_orientation_factor(self, zenith_angle, slope, sun_azimuth, panel_azimuth):
-        """Calculate the surface orientation factor (f_surf)."""
+        """Calculate the surface orientation factor (f_surf) using the physically correct formulation.
+        f_surf = cos(β)·cos(θz) + sin(β)·√(1-cos²(θz))·cos(φs-φp)
+        where:
+        β: Panel tilt angle
+        θz: Solar zenith angle
+        φs: Solar azimuth
+        φp: Panel azimuth
+        """
         slope_rad = torch.deg2rad(slope)
         sun_azimuth_rad = torch.deg2rad(sun_azimuth)
         panel_azimuth_rad = torch.deg2rad(panel_azimuth)
 
-        return (
-            torch.cos(slope_rad) * zenith_angle +
-            torch.sin(slope_rad) * torch.sqrt(1 - zenith_angle ** 2) *
-            torch.cos(sun_azimuth_rad - panel_azimuth_rad)
-        )
+        # Calculate each term separately for clarity
+        term1 = torch.cos(slope_rad) * zenith_angle  # cos(β)·cos(θz)
+        term2 = torch.sin(slope_rad) * torch.sqrt(1 - zenith_angle ** 2)  # sin(β)·√(1-cos²(θz))
+        term3 = torch.cos(sun_azimuth_rad - panel_azimuth_rad)  # cos(φs-φp)
+
+        return term1 + term2 * term3
 
     def calculate_hour_angle(self, time):
         """Calculate the hour angle (h) based on the time of day."""
         return torch.deg2rad(15 * (time - 12))
 
     def calculate_irradiance(self, latitude, time, slope=0, panel_azimuth=0):
-        """Calculate the total solar irradiance at the surface under ideal conditions."""
+        """Calculate the total solar irradiance and efficiency at the surface under ideal conditions.
+        
+        The efficiency is calculated using the formula: η = ηref * fsurf
+        where:
+        ηref: Reference efficiency at standard test conditions
+        fsurf: Surface orientation factor"""
         # Ensure inputs are tensors with proper dtype
         latitude = torch.as_tensor(latitude, dtype=torch.float32)
         time = torch.as_tensor(time, dtype=torch.float32)
@@ -115,10 +129,20 @@ class SolarPhysicsIdeal:
             cos_zenith, slope, hour_angle, panel_azimuth
         )
 
-        # Step 7: Calculate irradiance
+        # Step 7: Calculate irradiance and efficiency
+        # Calculate irradiance using atmospheric transmission and surface orientation
         irradiance = self.solar_constant * transmission * surface_orientation
-
-        return torch.clamp(irradiance, min=0.0)  # Ensure non-negative irradiance
+        
+        # Calculate efficiency using the physically correct formulation: η = ηref * fsurf
+        # where fsurf is the surface orientation factor that accounts for panel tilt and azimuth
+        # and ηref is the reference efficiency at standard test conditions (20%)
+        efficiency = self.reference_efficiency * surface_orientation
+        
+        return {
+            'irradiance': torch.clamp(irradiance, min=0.0),  # Ensure non-negative irradiance
+            'efficiency': torch.clamp(efficiency, min=0.0, max=self.reference_efficiency),  # Bounded efficiency
+            'surface_factor': surface_orientation  # Return surface orientation factor for debugging
+        }
 
 def calculate_metrics(y_true, y_pred):
     """Calculate validation metrics between true and predicted values."""

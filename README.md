@@ -69,26 +69,13 @@ plotly
 ```
 
 ### Running the Application
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+The application is configured to run directly on Replit. The Streamlit interface will automatically start and be accessible via the provided URL.
 
-2. Run the Streamlit application:
-```bash
-streamlit run main.py --server.port 5000 --server.address 0.0.0.0
-```
+Note: Training scripts have been removed from the default workflow to optimize startup time. The application uses pre-trained models for predictions.
 
-### Training Models
-1. Train base model:
-```bash
-python train_solar_pinn.py
-```
-
-2. Train ideal conditions model:
-```bash
-python train_solar_pinn_ideal.py
-```
+To access the trained models:
+- Base model: `best_solar_pinn.pth`
+- Ideal conditions model: `best_solar_pinn_ideal.pth`
 
 ## Web Interface Features
 - Interactive parameter adjustment

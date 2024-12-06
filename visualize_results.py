@@ -16,35 +16,32 @@ def load_model(model_path='best_solar_pinn_ideal.pth'):
 def create_surface_plot(model, latitude, longitude, time, resolution=30):
     """Create interactive 3D surface plot of solar panel efficiency using Plotly."""
     try:
+        from physics_validator import SolarPhysicsIdeal
+        physics_model = SolarPhysicsIdeal()
+        
         # Convert inputs to tensors with correct dtype
         latitude = torch.tensor(float(latitude), dtype=torch.float32)
         longitude = torch.tensor(float(longitude), dtype=torch.float32)
         time = torch.tensor(float(time), dtype=torch.float32)
         
         # Create meshgrid for slope and aspect
-        slopes = torch.linspace(0, 90, resolution)
-        aspects = torch.linspace(0, 360, resolution)
+        slopes = torch.linspace(0, 90, resolution)  # Panel slope (β) from 0 to 90 degrees
+        aspects = torch.linspace(0, 360, resolution)  # Panel azimuth (φp) from 0 to 360 degrees
         slope_grid, aspect_grid = torch.meshgrid(slopes, aspects, indexing='xy')
         
         # Initialize results tensor
         efficiency_map = torch.zeros((resolution, resolution), dtype=torch.float32)
         
-        # Calculate efficiency for each point
+        # Calculate efficiency for each point using physics-based model
         for i in range(resolution):
             for j in range(resolution):
-                # Create input tensor for single point
-                x_data = torch.tensor([[
-                    latitude.item() / 90,
-                    longitude.item() / 180,
-                    time.item() / 24,
-                    slopes[i].item() / 180,
-                    aspects[j].item() / 360
-                ]], dtype=torch.float32)
-                
-                # Get prediction
-                with torch.no_grad():
-                    prediction = model(x_data)
-                    efficiency_map[i, j] = prediction.item()
+                efficiency = physics_model.calculate_efficiency(
+                    latitude=latitude,
+                    time=time,
+                    slope=slopes[i],
+                    panel_azimuth=aspects[j]
+                )
+                efficiency_map[i, j] = efficiency.item()
         
         # Find optimal parameters
         max_idx = torch.argmax(efficiency_map)
@@ -79,13 +76,19 @@ def create_surface_plot(model, latitude, longitude, time, resolution=30):
                 xanchor='center'
             ),
             scene=dict(
-                xaxis_title='Panel Slope (degrees)',
-                yaxis_title='Panel Aspect (degrees)',
-                zaxis_title='Relative Efficiency',
+                xaxis_title='Panel Slope β (degrees)',
+                yaxis_title='Panel Azimuth φp (degrees)',
+                zaxis_title='Total Efficiency η',
                 camera=dict(
                     up=dict(x=0, y=0, z=1),
                     center=dict(x=0, y=0, z=0),
                     eye=dict(x=1.5, y=1.5, z=1.5)
+                ),
+                xaxis=dict(range=[0, 90]),   # Slope range
+                yaxis=dict(range=[0, 360]),  # Azimuth range
+                zaxis=dict(
+                    range=[0, 0.25],  # Efficiency range (0-25%)
+                    tickformat='.1%'   # Format as percentage
                 )
             ),
             template="plotly_dark"

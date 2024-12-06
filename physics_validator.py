@@ -126,8 +126,8 @@ class SolarPhysicsIdeal:
         Args:
             latitude: Location latitude in degrees
             time: Time of day (hour)
-            slope: Panel slope angle in degrees
-            panel_azimuth: Panel azimuth angle in degrees
+            slope: Panel slope angle in degrees (β)
+            panel_azimuth: Panel azimuth angle in degrees (φp)
             ref_efficiency: Reference efficiency under STC (default 0.15 or 15%)
             
         Returns:
@@ -145,17 +145,36 @@ class SolarPhysicsIdeal:
         # Calculate solar position
         declination = self.calculate_declination(day_of_year)
         hour_angle = self.calculate_hour_angle(time % 24)
-        cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)
+        
+        # Convert angles to radians
+        lat_rad = torch.deg2rad(latitude)
+        decl_rad = torch.deg2rad(declination)
+        hour_angle_rad = hour_angle  # Already in radians
+        slope_rad = torch.deg2rad(slope)
+        panel_azimuth_rad = torch.deg2rad(panel_azimuth)
+        
+        # Calculate zenith angle
+        cos_zenith = torch.sin(lat_rad) * torch.sin(decl_rad) + \
+                     torch.cos(lat_rad) * torch.cos(decl_rad) * torch.cos(hour_angle_rad)
         cos_zenith = torch.clamp(cos_zenith, min=0.0)  # Ensure no negative values
         
-        # Calculate surface orientation factor (fsurf)
-        surface_factor = self.calculate_surface_orientation_factor(
-            cos_zenith, slope, hour_angle, panel_azimuth
-        )
+        # Calculate solar azimuth angle (φs)
+        sin_solar_azimuth = torch.cos(decl_rad) * torch.sin(hour_angle_rad) / \
+                           torch.sqrt(1 - cos_zenith**2 + 1e-6)  # Add small epsilon to avoid division by zero
+        cos_solar_azimuth = (torch.sin(decl_rad) * torch.cos(lat_rad) - \
+                            torch.cos(decl_rad) * torch.sin(lat_rad) * torch.cos(hour_angle_rad)) / \
+                           torch.sqrt(1 - cos_zenith**2 + 1e-6)
+        solar_azimuth = torch.atan2(sin_solar_azimuth, cos_solar_azimuth)
+        
+        # Calculate surface orientation factor (fsurt)
+        # fsurt = cos(β)cos(θz) + sin(β)√(1-cos²(θz))cos(φs-φp)
+        fsurt = torch.cos(slope_rad) * cos_zenith + \
+                torch.sin(slope_rad) * torch.sqrt(1 - cos_zenith**2) * \
+                torch.cos(solar_azimuth - panel_azimuth_rad)
         
         # Calculate total efficiency
-        # η = ηref * fsurf
-        total_efficiency = ref_efficiency * surface_factor
+        # η = ηref * fsurt
+        total_efficiency = ref_efficiency * fsurt
         
         return torch.clamp(total_efficiency, min=0.0)  # Ensure non-negative efficiency
 

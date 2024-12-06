@@ -5,13 +5,41 @@ from solar_pinn_ideal import SolarPINN, PINNTrainer
 from physics_validator import SolarPhysicsIdeal
 
 def generate_training_data(n_samples=2000, validation_split=0.2):
-    """Generate synthetic training data with enhanced night time handling."""
-    # Generate random input parameters with normalization
-    latitude = (torch.rand(n_samples) * 180 - 90).requires_grad_()  # -90 to 90 degrees
-    longitude = (torch.rand(n_samples) * 360 - 180).requires_grad_()  # -180 to 180 degrees
-    time = (torch.rand(n_samples) * 24).requires_grad_()  # 0 to 24 hours
-    slope = (torch.rand(n_samples) * 45).requires_grad_()  # 0 to 45 degrees slope
-    aspect = (torch.rand(n_samples) * 360).requires_grad_()  # 0 to 360 degrees aspect
+    """Generate synthetic training data with enhanced equatorial sampling."""
+    # Calculate sample distribution
+    equatorial_samples = int(n_samples * 0.5)  # 50% samples for -45° to +45°
+    polar_samples = n_samples - equatorial_samples
+    
+    # Generate equatorial samples (-45° to +45°)
+    equatorial_latitude = (torch.rand(equatorial_samples) * 90 - 45).requires_grad_()
+    
+    # Generate remaining samples for polar regions
+    polar_latitude_north = (torch.rand(polar_samples // 2) * 45 + 45).requires_grad_()
+    polar_latitude_south = (torch.rand(polar_samples // 2) * -45 - 45).requires_grad_()
+    
+    # Combine latitudes
+    latitude = torch.cat([equatorial_latitude, polar_latitude_north, polar_latitude_south])
+    
+    # Generate other parameters
+    longitude = (torch.rand(n_samples) * 360 - 180).requires_grad_()
+    time = (torch.rand(n_samples) * 24).requires_grad_()
+    slope = (torch.rand(n_samples) * 45).requires_grad_()
+    aspect = (torch.rand(n_samples) * 360).requires_grad_()
+    
+    # Add 30% more samples in equatorial region (-15° to +15°)
+    extra_equatorial = int(n_samples * 0.3)
+    extra_latitude = (torch.rand(extra_equatorial) * 30 - 15).requires_grad_()
+    extra_longitude = (torch.rand(extra_equatorial) * 360 - 180).requires_grad_()
+    extra_time = (torch.rand(extra_equatorial) * 24).requires_grad_()
+    extra_slope = (torch.rand(extra_equatorial) * 45).requires_grad_()
+    extra_aspect = (torch.rand(extra_equatorial) * 360).requires_grad_()
+    
+    # Combine with original data
+    latitude = torch.cat([latitude[:n_samples-extra_equatorial], extra_latitude])
+    longitude = torch.cat([longitude[:n_samples-extra_equatorial], extra_longitude])
+    time = torch.cat([time[:n_samples-extra_equatorial], extra_time])
+    slope = torch.cat([slope[:n_samples-extra_equatorial], extra_slope])
+    aspect = torch.cat([aspect[:n_samples-extra_equatorial], extra_aspect])
     
     # Add more samples around sunrise and sunset times
     twilight_samples = int(n_samples * 0.2)  # 20% of samples around twilight periods
@@ -71,25 +99,25 @@ def main():
     x_train, y_train, x_val, y_val = generate_training_data()
     
     # Enhanced training parameters
-    n_epochs = 500  # Increased epochs
-    batch_size = 128  # Increased batch size for better gradient estimates
+    n_epochs = 800  # Increased epochs
+    batch_size = 256  # Increased batch size for better gradient estimates
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')
-    patience = 30  # Increased patience
+    patience = 50  # Increased patience
     patience_counter = 0
-    min_lr = 1e-5  # Minimum learning rate
+    min_lr = 1e-6  # Reduced minimum learning rate
     
     # Learning rate scheduler with warm-up and cosine annealing
     def get_lr(epoch):
-        warmup_epochs = 50
+        warmup_epochs = 100  # Increased warmup epochs
         if epoch < warmup_epochs:
-            return 0.001 * (epoch + 1) / warmup_epochs
+            return 0.002 * (epoch + 1) / warmup_epochs
         else:
             return max(min_lr, 0.001 * 0.5 * (1 + np.cos((epoch - warmup_epochs) * np.pi / (n_epochs - warmup_epochs))))
     
     # Physics loss weight scheduling with gradual increase
-    initial_physics_weight = 0.1
-    max_physics_weight = 0.5
+    initial_physics_weight = 0.05  # Reduced initial physics weight
+    max_physics_weight = 0.3  # Reduced maximum physics weight
     
     print("Starting training...")
     print(f"Training samples: {len(x_train)}, Validation samples: {len(x_val)}")

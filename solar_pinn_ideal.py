@@ -28,13 +28,16 @@ class SolarPINN(nn.Module):
         self.atmospheric_extinction = 0.1  # Idealized clear-sky extinction coefficient
 
     def setup_network(self, input_dim):
-        """Setup neural network architecture."""
+        """Setup neural network architecture with batch normalization."""
         self.physics_net = nn.Sequential(
             PhysicsInformedLayer(input_dim, 128),
+            nn.BatchNorm1d(128, momentum=0.9, eps=1e-5),
             nn.Tanh(),
             PhysicsInformedLayer(128, 256),
+            nn.BatchNorm1d(256, momentum=0.9, eps=1e-5),
             nn.Tanh(),
             PhysicsInformedLayer(256, 128),
+            nn.BatchNorm1d(128, momentum=0.9, eps=1e-5),
             nn.Tanh(),
             PhysicsInformedLayer(128, 1)
         )
@@ -86,6 +89,13 @@ class SolarPINN(nn.Module):
 
     def forward(self, x):
         """Forward pass with essential physics constraints using normalized inputs."""
+        # Handle single sample case for inference
+        if x.size(0) == 1:
+            self.eval()  # Set to evaluation mode for single sample
+            for module in self.physics_net.modules():
+                if isinstance(module, nn.BatchNorm1d):
+                    module.eval()
+        
         # Extract normalized input components
         lat_norm, lon_norm, time_norm, slope_norm, aspect_norm = x.split(1, dim=1)
         
@@ -134,9 +144,12 @@ class SolarPINN(nn.Module):
         return final_prediction / self.solar_constant
 
 class PINNTrainer:
-    def __init__(self, model, learning_rate=0.001):
+    def __init__(self, model, learning_rate=0.001, min_lr=0.0001):
         self.model = model
         self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=200, eta_min=min_lr
+        )
 
     def train_step(self, x_data, y_data):
         self.optimizer.zero_grad()
@@ -144,8 +157,11 @@ class PINNTrainer:
         # Forward pass
         y_pred = self.model(x_data)
         
-        # Calculate data loss
+        # Calculate data loss with adaptive weighting
         data_loss = F.mse_loss(y_pred, y_data)
+        prediction_error = torch.abs(y_pred - y_data)
+        adaptive_weight = torch.exp(-prediction_error)
+        weighted_data_loss = torch.mean(data_loss * adaptive_weight)
         
         # Extract time components for boundary conditions
         lat = x_data[:, 0] * 90
@@ -153,19 +169,36 @@ class PINNTrainer:
         day_of_year = torch.floor(time / 24 * 365)
         hour_of_day = time % 24
         
-        # Calculate physics loss
+        # Enhanced physics constraints
         sunrise, sunset = self.model.boundary_conditions(lat, day_of_year)
         night_mask = (hour_of_day < sunrise) | (hour_of_day > sunset)
         physics_loss = torch.mean(y_pred[night_mask] ** 2)
         
-        # Combined loss with retain_graph
-        total_loss = data_loss + 0.1 * physics_loss
+        # Gradient penalty for physical consistency
+        grad_outputs = torch.ones_like(y_pred)
+        gradients = torch.autograd.grad(
+            y_pred, x_data,
+            grad_outputs=grad_outputs,
+            create_graph=True,
+            only_inputs=True
+        )[0]
+        gradient_penalty = torch.mean(gradients.pow(2))
+        
+        # Combined loss with enhanced physics constraints
+        total_loss = (
+            weighted_data_loss +
+            0.1 * physics_loss +
+            0.01 * gradient_penalty
+        )
         
         # Backward pass with retain_graph
         total_loss.backward(retain_graph=True)
         
         # Optimizer step
         self.optimizer.step()
+        
+        # Update learning rate
+        self.scheduler.step()
         
         # Clean up graphs
         for param in self.model.parameters():

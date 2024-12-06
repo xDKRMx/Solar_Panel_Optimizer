@@ -11,4 +11,5 @@ dependencies = [
     "streamlit-folium>=0.23.2",
     "streamlit>=1.40.2",
     "torch>=2.5.1",
+    "tqdm>=4.67.1",
 ]

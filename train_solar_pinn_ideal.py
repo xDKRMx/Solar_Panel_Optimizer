@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from solar_pinn_ideal import SolarPINN, PINNTrainer
 from physics_validator import SolarPhysicsIdeal
 
-def generate_training_data(n_samples=1000, validation_split=0.2):
+def generate_training_data(n_samples=5000, validation_split=0.2):
     """Generate synthetic training data for ideal clear sky conditions."""
     # Generate random input parameters with normalization
     latitude = (torch.rand(n_samples) * 180 - 90).requires_grad_()  # -90 to 90 degrees
@@ -78,6 +78,8 @@ def main():
         # Training
         model.train()
         epoch_loss = 0
+        epoch_data_loss = 0
+        epoch_physics_loss = 0
         
         # Shuffle training data
         indices = torch.randperm(len(x_train))
@@ -87,25 +89,29 @@ def main():
             x_batch = x_train[batch_indices]
             y_batch = y_train[batch_indices]
             
-            loss = trainer.train_step(x_batch, y_batch)
-            epoch_loss += loss
+            total_loss, data_loss, physics_loss = trainer.train_step(x_batch, y_batch)
+            epoch_loss += total_loss
+            epoch_data_loss += data_loss
+            epoch_physics_loss += physics_loss
         
         avg_train_loss = epoch_loss / n_batches
+        avg_data_loss = epoch_data_loss / n_batches
+        avg_physics_loss = epoch_physics_loss / n_batches
         
         # Validation
         model.eval()
-        with torch.no_grad():
-            try:
-                # PINN predictions with gradient tracking disabled
+        try:
+            # Validation step with learning rate scheduling
+            val_loss = trainer.validation_step(x_val, y_val)
+            
+            # Calculate validation metrics
+            with torch.no_grad():
                 y_pred = model(x_val)
-                val_loss = F.mse_loss(y_pred, y_val)
-                
-                # Calculate validation metrics
                 val_metrics = calculate_metrics(y_val, y_pred)
-            except Exception as e:
-                print(f"Validation error: {str(e)}")
-                val_loss = float('inf')
-                val_metrics = {'mae': float('inf'), 'rmse': float('inf'), 'r2': -float('inf')}
+        except Exception as e:
+            print(f"Validation error: {str(e)}")
+            val_loss = float('inf')
+            val_metrics = {'mae': float('inf'), 'rmse': float('inf'), 'r2': -float('inf')}
         
         # Early stopping check
         if val_loss < best_val_loss:
@@ -127,7 +133,8 @@ def main():
         
         if (epoch + 1) % 5 == 0:  # Print more frequently
             print(f"\nEpoch [{epoch+1}/{n_epochs}]")
-            print(f"Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}")
+            print(f"Train Loss: {avg_train_loss:.4f} (Data: {avg_data_loss:.4f}, Physics: {avg_physics_loss:.4f})")
+            print(f"Val Loss: {val_loss:.4f}")
             print(f"Validation Metrics:")
             print(f"MAE: {val_metrics['mae']:.2f} W/m²")
             print(f"RMSE: {val_metrics['rmse']:.2f} W/m²")

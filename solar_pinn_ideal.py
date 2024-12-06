@@ -28,13 +28,16 @@ class SolarPINN(nn.Module):
         self.atmospheric_extinction = 0.1  # Idealized clear-sky extinction coefficient
 
     def setup_network(self, input_dim):
-        """Setup neural network architecture."""
+        """Setup neural network architecture with batch normalization."""
         self.physics_net = nn.Sequential(
             PhysicsInformedLayer(input_dim, 128),
+            nn.BatchNorm1d(128),
             nn.Tanh(),
             PhysicsInformedLayer(128, 256),
+            nn.BatchNorm1d(256),
             nn.Tanh(),
             PhysicsInformedLayer(256, 128),
+            nn.BatchNorm1d(128),
             nn.Tanh(),
             PhysicsInformedLayer(128, 1)
         )
@@ -137,9 +140,16 @@ class PINNTrainer:
     def __init__(self, model, learning_rate=0.001):
         self.model = model
         self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+        # Add learning rate scheduler
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode='min', factor=0.5, patience=5, verbose=True
+        )
+        self.physics_weight = 0.5  # Starting with higher weight for physics loss
+        self.physics_decay = 0.995  # Decay factor for physics weight
 
-    def train_step(self, x_data, y_data):
-        self.optimizer.zero_grad()
+    def train_step(self, x_data, y_data, validation=False):
+        if not validation:
+            self.optimizer.zero_grad()
         
         # Forward pass
         y_pred = self.model(x_data)
@@ -158,18 +168,32 @@ class PINNTrainer:
         night_mask = (hour_of_day < sunrise) | (hour_of_day > sunset)
         physics_loss = torch.mean(y_pred[night_mask] ** 2)
         
-        # Combined loss with retain_graph
-        total_loss = data_loss + 0.1 * physics_loss
+        # Combined loss with adaptive physics weight
+        total_loss = data_loss + self.physics_weight * physics_loss
         
-        # Backward pass with retain_graph
-        total_loss.backward(retain_graph=True)
+        if not validation:
+            # Backward pass with retain_graph
+            total_loss.backward(retain_graph=True)
+            
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            
+            # Optimizer step
+            self.optimizer.step()
+            
+            # Decay physics weight
+            self.physics_weight *= self.physics_decay
+            
+            # Clean up graphs
+            for param in self.model.parameters():
+                if param.grad is not None:
+                    param.grad.detach_()
         
-        # Optimizer step
-        self.optimizer.step()
-        
-        # Clean up graphs
-        for param in self.model.parameters():
-            if param.grad is not None:
-                param.grad.detach_()
-        
-        return total_loss.item()
+        return total_loss.item(), data_loss.item(), physics_loss.item()
+
+    def validation_step(self, x_data, y_data):
+        """Perform validation step and update learning rate scheduler."""
+        with torch.no_grad():
+            val_loss, _, _ = self.train_step(x_data, y_data, validation=True)
+            self.scheduler.step(val_loss)
+            return val_loss

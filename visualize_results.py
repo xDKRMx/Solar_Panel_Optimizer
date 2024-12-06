@@ -87,8 +87,8 @@ def create_surface_plot(model, latitude, longitude, time, resolution=30):
                 xaxis=dict(range=[0, 90]),   # Slope range
                 yaxis=dict(range=[0, 360]),  # Azimuth range
                 zaxis=dict(
-                    range=[0, 0.25],  # Efficiency range (0-25%)
-                    tickformat='.1%'   # Format as percentage
+                    range=[0, 0.25],  # Efficiency range (0-0.25)
+                    tickformat='.3f'   # Format as decimal number with 3 decimal places
                 )
             ),
             template="plotly_dark"

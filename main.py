@@ -191,7 +191,14 @@ def main():
         with col2:
             st.subheader("Physics Calculation")
             st.write(f"Physics-based Irradiance: {physics_irradiance:.2f} W/m²")
-            st.write(f"{efficiency*100:.1f}%")
+            st.write(f"{efficiency:.3f}")
+            
+            # Add explanation for the efficiency value
+            st.markdown("""
+            <small style='color: gray;'>
+            *Efficiency shown as decimal (0-1 range)*
+            </small>
+            """, unsafe_allow_html=True)
         
         # Calculate accuracy metrics
         accuracy_ratio = min(predicted_irradiance, physics_irradiance) / max(predicted_irradiance, physics_irradiance) * 100

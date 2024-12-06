@@ -23,6 +23,10 @@ args = "Train PINN"
 task = "workflow.run"
 args = "Train PINN Ideal"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Validate PINN"
+
 [[workflows.workflow]]
 name = "Streamlit App"
 author = "agent"
@@ -65,6 +69,20 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python3 train_solar_pinn_ideal.py"
+
+[[workflows.workflow]]
+name = "Validate PINN"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python3 validate_solar_pinn.py"
 
 [deployment]
 run = ["sh", "-c", "streamlit run main.py --server.port 5000"]

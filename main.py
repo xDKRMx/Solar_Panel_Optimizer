@@ -33,31 +33,69 @@ def main():
     # Sidebar inputs
     st.sidebar.header("Parameters")
     
-    # Location parameters
-    latitude = st.sidebar.slider(
-        "Latitude", -90.0, 90.0,
-        value=float(st.session_state.get('latitude', 45.0)),
-        key='latitude_slider'
-    )
-    longitude = st.sidebar.slider(
-        "Longitude", -180.0, 180.0,
-        value=float(st.session_state.get('longitude', 0.0)),
-        key='longitude_slider'
-    )
+    if st.sidebar.button("📍 Select Location on Map", key="location_button"):
+        st.session_state.show_map = not st.session_state.show_map
     
-    # Update session state when sliders change
+    # Location parameters section
+    st.sidebar.subheader("Location Parameters")
+    
+    # Latitude input with slider and number input
+    lat_col1, lat_col2 = st.sidebar.columns([2, 1])
+    with lat_col1:
+        latitude = st.slider("Latitude", -90.0, 90.0,
+            value=float(st.session_state.get('latitude', 45.0)),
+            key='latitude_slider'
+        )
+    with lat_col2:
+        latitude = st.number_input("", -90.0, 90.0,
+            value=float(st.session_state.get('latitude', 45.0)),
+            key='latitude_input',
+            label_visibility="collapsed"
+        )
+    
+    # Longitude input with slider and number input
+    lon_col1, lon_col2 = st.sidebar.columns([2, 1])
+    with lon_col1:
+        longitude = st.slider("Longitude", -180.0, 180.0,
+            value=float(st.session_state.get('longitude', 0.0)),
+            key='longitude_slider'
+        )
+    with lon_col2:
+        longitude = st.number_input("", -180.0, 180.0,
+            value=float(st.session_state.get('longitude', 0.0)),
+            key='longitude_input',
+            label_visibility="collapsed"
+        )
+    
+    # Day of Year input with slider and number input
+    day_col1, day_col2 = st.sidebar.columns([2, 1])
+    with day_col1:
+        day_of_year = st.slider("Day of Year", 1, 365, 182,
+            key='day_slider'
+        )
+    with day_col2:
+        day_of_year = st.number_input("", 1, 365, 182,
+            key='day_input',
+            label_visibility="collapsed"
+        )
+    
+    # Hour of Day input with slider and number input
+    hour_col1, hour_col2 = st.sidebar.columns([2, 1])
+    with hour_col1:
+        hour = st.slider("Hour of Day", 0.0, 24.0, 12.0, 0.1,
+            key='hour_slider'
+        )
+    with hour_col2:
+        hour = st.number_input("", 0.0, 24.0, 12.0, 0.1,
+            key='hour_input',
+            label_visibility="collapsed"
+        )
+    
+    # Update session state when values change
     if latitude != st.session_state.get('latitude'):
         st.session_state['latitude'] = latitude
     if longitude != st.session_state.get('longitude'):
         st.session_state['longitude'] = longitude
-    
-    # Time parameters
-    day_of_year = st.sidebar.slider("Day of Year", 1, 365, 182)
-    hour = st.sidebar.slider("Hour of Day", 0.0, 24.0, 12.0, 0.1)
-    
-    # Show Map button in sidebar
-    if st.sidebar.button("📍 Select Location on Map", key="location_button"):
-        st.session_state.show_map = not st.session_state.show_map
     
     # Add map section before predictions
     if st.session_state.show_map:

@@ -15,10 +15,19 @@ def main():
     
     # Load the trained model
     try:
+        print("Debug: Starting model loading process...")  # Debug print
         model = load_model('best_solar_pinn_ideal.pth')
+        print("Debug: Model loaded successfully")  # Debug print
+    except FileNotFoundError as e:
+        print(f"Debug: FileNotFoundError - {str(e)}")  # Debug print
+        st.error("Model file not found. Please ensure 'best_solar_pinn_ideal.pth' exists in the current directory.")
+        st.stop()
     except Exception as e:
+        print(f"Debug: Unexpected error while loading model - {str(e)}")  # Debug print
         st.error(f"Error loading model: {str(e)}")
-        return
+        st.stop()
+    
+    print("Debug: Proceeding with main application flow")  # Debug print
     
     # Sidebar inputs
     st.sidebar.header("Parameters")
@@ -64,11 +73,11 @@ def main():
         
         # Determine color based on accuracy ratio
         if accuracy_ratio > 85:
-            metrics_color = "#1b4332"  # Green
+            metrics_color = "#0b2318"  # Darker green
         elif accuracy_ratio > 70:
-            metrics_color = "#ffaa00"  # Orange
+            metrics_color = "#cc8800"  # Darker orange
         else:
-            metrics_color = "#ff4444"  # Red
+            metrics_color = "#cc0000"  # Darker red
         
         # Display accuracy metrics with dynamic styling
         st.markdown("""

@@ -28,13 +28,16 @@ class SolarPINN(nn.Module):
         self.atmospheric_extinction = 0.1  # Idealized clear-sky extinction coefficient
 
     def setup_network(self, input_dim):
-        """Setup neural network architecture."""
+        """Setup neural network architecture with batch normalization."""
         self.physics_net = nn.Sequential(
             PhysicsInformedLayer(input_dim, 128),
+            nn.BatchNorm1d(128),
             nn.Tanh(),
             PhysicsInformedLayer(128, 256),
+            nn.BatchNorm1d(256),
             nn.Tanh(),
             PhysicsInformedLayer(256, 128),
+            nn.BatchNorm1d(128),
             nn.Tanh(),
             PhysicsInformedLayer(128, 1)
         )
@@ -138,7 +141,7 @@ class PINNTrainer:
         self.model = model
         self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    def train_step(self, x_data, y_data):
+    def train_step(self, x_data, y_data, physics_weight=0.15):
         self.optimizer.zero_grad()
         
         # Forward pass
@@ -159,7 +162,7 @@ class PINNTrainer:
         physics_loss = torch.mean(y_pred[night_mask] ** 2)
         
         # Combined loss with retain_graph
-        total_loss = data_loss + 0.1 * physics_loss
+        total_loss = data_loss + physics_weight * physics_loss
         
         # Backward pass with retain_graph
         total_loss.backward(retain_graph=True)

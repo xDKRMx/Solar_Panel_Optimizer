@@ -65,11 +65,23 @@ def main():
     
     # Training parameters
     n_epochs = 200
-    batch_size = 32
+    batch_size = 64  # Increased batch size
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')
     patience = 20
     patience_counter = 0
+    
+    # Learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.StepLR(
+        trainer.optimizer, 
+        step_size=50,
+        gamma=0.5
+    )
+    
+    # Physics loss weight scheduling
+    initial_physics_weight = 0.15
+    max_physics_weight = 0.3
+    physics_weight = initial_physics_weight
     
     print("Starting training...")
     print(f"Training samples: {len(x_train)}, Validation samples: {len(x_val)}")
@@ -87,8 +99,15 @@ def main():
             x_batch = x_train[batch_indices]
             y_batch = y_train[batch_indices]
             
-            loss = trainer.train_step(x_batch, y_batch)
+            # Update physics weight gradually
+            physics_weight = initial_physics_weight + (max_physics_weight - initial_physics_weight) * (epoch / n_epochs)
+            
+            # Training step with current physics weight
+            loss = trainer.train_step(x_batch, y_batch, physics_weight=physics_weight)
             epoch_loss += loss
+            
+        # Step the learning rate scheduler
+        scheduler.step()
         
         avg_train_loss = epoch_loss / n_batches
         

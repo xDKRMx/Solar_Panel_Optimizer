@@ -6,12 +6,6 @@ class SolarPhysicsIdeal:
         # Universal physical constants
         self.solar_constant = 1367.0  # Solar constant, S (W/m²)
         self.extinction_coefficient = 0.1  # Idealized extinction coefficient for clear sky
-        self.reference_efficiency = 0.20  # Reference efficiency at standard test conditions (20%)
-        
-        # Temperature correction parameters
-        self.temp_coefficient = -0.004  # β, temperature coefficient (/°C)
-        self.ref_temperature = 25.0     # Tref, reference temperature (°C)
-        self.noct = 45.0               # NOCT, Nominal Operating Cell Temperature (°C)
 
     def calculate_declination(self, day_of_year):
         """Calculate the solar declination angle (δ) for a given day of the year."""
@@ -74,41 +68,23 @@ class SolarPhysicsIdeal:
         return base_transmission * rayleigh * aerosol * ozone
 
     def calculate_surface_orientation_factor(self, zenith_angle, slope, sun_azimuth, panel_azimuth):
-        """Calculate the surface orientation factor (f_surf) using the physically correct formulation.
-        f_surf = cos(β)·cos(θz) + sin(β)·√(1-cos²(θz))·cos(φs-φp)
-        where:
-        β: Panel tilt angle
-        θz: Solar zenith angle
-        φs: Solar azimuth
-        φp: Panel azimuth
-        """
+        """Calculate the surface orientation factor (f_surf)."""
         slope_rad = torch.deg2rad(slope)
         sun_azimuth_rad = torch.deg2rad(sun_azimuth)
         panel_azimuth_rad = torch.deg2rad(panel_azimuth)
 
-        # Calculate each term separately for clarity
-        term1 = torch.cos(slope_rad) * zenith_angle  # cos(β)·cos(θz)
-        term2 = torch.sin(slope_rad) * torch.sqrt(1 - zenith_angle ** 2)  # sin(β)·√(1-cos²(θz))
-        term3 = torch.cos(sun_azimuth_rad - panel_azimuth_rad)  # cos(φs-φp)
-
-        return term1 + term2 * term3
+        return (
+            torch.cos(slope_rad) * zenith_angle +
+            torch.sin(slope_rad) * torch.sqrt(1 - zenith_angle ** 2) *
+            torch.cos(sun_azimuth_rad - panel_azimuth_rad)
+        )
 
     def calculate_hour_angle(self, time):
         """Calculate the hour angle (h) based on the time of day."""
         return torch.deg2rad(15 * (time - 12))
 
-    def calculate_irradiance(self, latitude, time, slope=0, panel_azimuth=0, ambient_temperature=25.0, predicted_irradiance=None):
-        """Calculate the total solar irradiance and efficiency at the surface with temperature correction.
-        
-        The efficiency is calculated using the formula: η = ηref * fsurf * [1 + β(Tc - Tref)]
-        where:
-        - ηref: Reference efficiency at standard test conditions
-        - fsurf: Surface orientation factor
-        - β: Temperature coefficient
-        - Tc: Cell temperature = Ta + (I/800) * (NOCT-20)
-        - Tref: Reference temperature
-        - Ta: Ambient temperature
-        - I: Irradiance (either predicted or physics-based)"""
+    def calculate_irradiance(self, latitude, time, slope=0, panel_azimuth=0):
+        """Calculate the total solar irradiance at the surface under ideal conditions."""
         # Ensure inputs are tensors with proper dtype
         latitude = torch.as_tensor(latitude, dtype=torch.float32)
         time = torch.as_tensor(time, dtype=torch.float32)
@@ -139,36 +115,10 @@ class SolarPhysicsIdeal:
             cos_zenith, slope, hour_angle, panel_azimuth
         )
 
-        # Step 7: Calculate irradiance and efficiency
-        # Convert predicted irradiance to tensor if provided
-        if predicted_irradiance is not None:
-            irradiance = torch.as_tensor(predicted_irradiance, dtype=torch.float32)
-        else:
-            irradiance = self.solar_constant * transmission * surface_orientation
-        
-        # Calculate cell temperature using the provided formula
-        # Tc = Ta + (I/800) * (NOCT-20)
-        ambient_temperature = torch.as_tensor(ambient_temperature, dtype=torch.float32)
-        noct_diff = torch.as_tensor(self.noct - 20, dtype=torch.float32)
-        cell_temperature = ambient_temperature + (irradiance/800) * noct_diff
-        
-        # Calculate temperature correction factor: [1 + β(Tc - Tref)]
-        temp_coeff = torch.as_tensor(self.temp_coefficient, dtype=torch.float32)
-        ref_temp = torch.as_tensor(self.ref_temperature, dtype=torch.float32)
-        temp_correction = 1 + temp_coeff * (cell_temperature - ref_temp)
-        temp_correction = torch.as_tensor(temp_correction, dtype=torch.float32)
-        
-        # Calculate final efficiency with temperature correction: η = ηref * fsurf * [1 + β(Tc - Tref)]
-        base_efficiency = torch.as_tensor(self.reference_efficiency, dtype=torch.float32) * surface_orientation
-        efficiency = base_efficiency * temp_correction
-        
-        return {
-            'irradiance': torch.clamp(irradiance, min=0.0),  # Ensure non-negative irradiance
-            'efficiency': torch.clamp(efficiency, min=0.0, max=float(self.reference_efficiency)),  # Bounded efficiency
-            'surface_factor': surface_orientation,  # Surface orientation factor
-            'cell_temperature': cell_temperature,  # Cell temperature for debugging
-            'temp_correction': temp_correction  # Temperature correction factor for debugging
-        }
+        # Step 7: Calculate irradiance
+        irradiance = self.solar_constant * transmission * surface_orientation
+
+        return torch.clamp(irradiance, min=0.0)  # Ensure non-negative irradiance
 
 def calculate_metrics(y_true, y_pred):
     """Calculate validation metrics between true and predicted values."""

@@ -17,6 +17,8 @@ def main():
         st.session_state.latitude = 45.0
     if 'longitude' not in st.session_state:
         st.session_state.longitude = 0.0
+    if 'show_map' not in st.session_state:
+        st.session_state.show_map = False
     
     # Initialize physics model at the start
     physics_model = SolarPhysicsIdeal()
@@ -49,18 +51,37 @@ def main():
     if longitude != st.session_state.get('longitude'):
         st.session_state['longitude'] = longitude
     
-    
-    
     # Time parameters
     day_of_year = st.sidebar.slider("Day of Year", 1, 365, 182)
     hour = st.sidebar.slider("Hour of Day", 0.0, 24.0, 12.0, 0.1)
-
-    # Show Map button in sidebar
-    if 'show_map' not in st.session_state:
-        st.session_state.show_map = False
     
-    if st.sidebar.button("Show Map" if not st.session_state.show_map else "Hide Map"):
+    # Show Map button in sidebar
+    if st.sidebar.button("📍 Select Location on Map", key="location_button"):
         st.session_state.show_map = not st.session_state.show_map
+    
+    # Add map section before predictions
+    if st.session_state.show_map:
+        st.subheader("Select Location on Map")
+        m = folium.Map(
+            location=[latitude, longitude],
+            zoom_start=3,
+            tiles="OpenStreetMap"
+        )
+        
+        folium.Marker(
+            [st.session_state.get('latitude', latitude), 
+             st.session_state.get('longitude', longitude)],
+            popup="Selected Location",
+            icon=folium.Icon(color="red", icon="info-sign"),
+        ).add_to(m)
+        
+        map_data = st_folium(m, height=400, width=700, key="map")
+        
+        if map_data['last_clicked'] is not None:
+            st.session_state['latitude'] = map_data['last_clicked']['lat']
+            st.session_state['longitude'] = map_data['last_clicked']['lng']
+            st.success(f"Location selected: {st.session_state['latitude']:.4f}°, {st.session_state['longitude']:.4f}°")
+            st.rerun()
     
     # Calculate predictions and metrics
     try:
@@ -157,30 +178,6 @@ def main():
                 
     except Exception as e:
         st.error(f"Error calculating predictions: {str(e)}")
-
-    # Show interactive map after predictions if button is clicked
-    if st.session_state.show_map:
-        st.subheader("Select Location on Map")
-        m = folium.Map(
-            location=[latitude, longitude],
-            zoom_start=3,
-            tiles="OpenStreetMap"
-        )
-        
-        folium.Marker(
-            [st.session_state.get('latitude', latitude), 
-             st.session_state.get('longitude', longitude)],
-            popup="Selected Location",
-            icon=folium.Icon(color="red", icon="info-sign"),
-        ).add_to(m)
-        
-        map_data = st_folium(m, height=400, width=700, key="map")
-        
-        if map_data['last_clicked'] is not None:
-            st.session_state['latitude'] = map_data['last_clicked']['lat']
-            st.session_state['longitude'] = map_data['last_clicked']['lng']
-            st.success(f"Location selected: {st.session_state['latitude']:.4f}°, {st.session_state['longitude']:.4f}°")
-            st.rerun()
 
 if __name__ == "__main__":
     main()

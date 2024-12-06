@@ -29,12 +29,7 @@ def main():
     latitude = st.sidebar.slider("Latitude", -90.0, 90.0, 45.0, 0.1)
     longitude = st.sidebar.slider("Longitude", -180.0, 180.0, 0.0, 0.1)
     
-    # Display current location information
-    st.sidebar.markdown(f"""
-        **Selected Location:**  
-        Latitude: {latitude:.6f}°  
-        Longitude: {longitude:.6f}°
-    """)
+    
     
     # Time parameters
     day_of_year = st.sidebar.slider("Day of Year", 1, 365, 182)
@@ -164,7 +159,7 @@ def main():
             if map_data['last_clicked']:
                 st.session_state.latitude = map_data['last_clicked']['lat']
                 st.session_state.longitude = map_data['last_clicked']['lng']
-                st.experimental_rerun()
+                st.rerun()
                 
     except Exception as e:
         st.error(f"Error calculating predictions: {str(e)}")

@@ -32,16 +32,22 @@ def main():
     st.sidebar.header("Parameters")
     
     # Location parameters
-    latitude = st.sidebar.slider("Latitude", -90.0, 90.0, 
-                               value=st.session_state.get('latitude', 45.0), 
-                               key='latitude_slider')
-    longitude = st.sidebar.slider("Longitude", -180.0, 180.0, 
-                                value=st.session_state.get('longitude', 0.0),
-                                key='longitude_slider')
+    latitude = st.sidebar.slider(
+        "Latitude", -90.0, 90.0,
+        value=float(st.session_state.get('latitude', 45.0)),
+        key='latitude_slider'
+    )
+    longitude = st.sidebar.slider(
+        "Longitude", -180.0, 180.0,
+        value=float(st.session_state.get('longitude', 0.0)),
+        key='longitude_slider'
+    )
     
     # Update session state when sliders change
-    st.session_state['latitude'] = latitude
-    st.session_state['longitude'] = longitude
+    if latitude != st.session_state.get('latitude'):
+        st.session_state['latitude'] = latitude
+    if longitude != st.session_state.get('longitude'):
+        st.session_state['longitude'] = longitude
     
     
     
@@ -173,10 +179,8 @@ def main():
             if map_data['last_clicked'] is not None:
                 st.session_state['latitude'] = map_data['last_clicked']['lat']
                 st.session_state['longitude'] = map_data['last_clicked']['lng']
-                # Add success message
                 st.success(f"Location selected: {st.session_state['latitude']:.4f}°, {st.session_state['longitude']:.4f}°")
-                # Force the sidebar sliders to update
-                st.experimental_rerun()
+                st.rerun()
                 
     except Exception as e:
         st.error(f"Error calculating predictions: {str(e)}")

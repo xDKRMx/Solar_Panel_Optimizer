@@ -6,10 +6,15 @@ def load_model(model_path='best_solar_pinn_ideal.pth'):
     """Load the trained PINN model."""
     try:
         model = SolarPINN()
-        checkpoint = torch.load(model_path)
-        model.load_state_dict(checkpoint['model_state_dict'])
+        # Use weights_only=True to avoid pickle security warning
+        checkpoint = torch.load(model_path, weights_only=True, map_location=torch.device('cpu'))
+        # Handle both direct state dict and wrapped state dict cases
+        state_dict = checkpoint['model_state_dict'] if isinstance(checkpoint, dict) else checkpoint
+        model.load_state_dict(state_dict)
         model.eval()
         return model
+    except FileNotFoundError:
+        raise RuntimeError(f"Model file not found: {model_path}")
     except Exception as e:
         raise RuntimeError(f"Error loading model: {str(e)}")
 

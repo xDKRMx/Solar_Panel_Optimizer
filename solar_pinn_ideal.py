@@ -17,7 +17,7 @@ class PhysicsInformedLayer(nn.Module):
         return out
 
 class SolarPINN(nn.Module):
-    def __init__(self, input_dim=5):  # latitude, longitude, time, slope, aspect
+    def __init__(self, input_dim=6):  # latitude, longitude, time, slope, aspect, seasonal
         super().__init__()
         self.setup_physical_constants()
         self.setup_network(input_dim)
@@ -90,7 +90,7 @@ class SolarPINN(nn.Module):
     def forward(self, x):
         """Forward pass with essential physics constraints using normalized inputs."""
         # Extract normalized input components
-        lat_norm, lon_norm, time_norm, slope_norm, aspect_norm = x.split(1, dim=1)
+        lat_norm, lon_norm, time_norm, slope_norm, aspect_norm, seasonal_weight = x.split(1, dim=1)
         
         # Denormalize inputs for physics calculations
         lat = lat_norm * 90

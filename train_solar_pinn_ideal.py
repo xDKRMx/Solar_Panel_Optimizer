@@ -65,7 +65,7 @@ def main():
     
     # Training parameters
     n_epochs = 200
-    batch_size = 64  # Increased batch size
+    batch_size = 32  # Reduced batch size for better generalization
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')
     patience = 20

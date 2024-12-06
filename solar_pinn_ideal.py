@@ -28,18 +28,17 @@ class SolarPINN(nn.Module):
         self.atmospheric_extinction = 0.1  # Idealized clear-sky extinction coefficient
 
     def setup_network(self, input_dim):
-        """Setup neural network architecture with batch normalization."""
+        """Setup simplified neural network architecture with ReLU activation."""
         self.physics_net = nn.Sequential(
             PhysicsInformedLayer(input_dim, 128),
             nn.BatchNorm1d(128),
-            nn.Tanh(),
-            PhysicsInformedLayer(128, 256),
-            nn.BatchNorm1d(256),
-            nn.Tanh(),
-            PhysicsInformedLayer(256, 128),
-            nn.BatchNorm1d(128),
-            nn.Tanh(),
-            PhysicsInformedLayer(128, 1)
+            nn.ReLU(),
+            PhysicsInformedLayer(128, 64),
+            nn.ReLU(),
+            PhysicsInformedLayer(64, 32),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            PhysicsInformedLayer(32, 1)
         )
 
     def calculate_declination(self, day_of_year):
@@ -88,16 +87,16 @@ class SolarPINN(nn.Module):
         return sunrise, sunset
 
     def forward(self, x):
-        """Forward pass with essential physics constraints using normalized inputs."""
-        # Extract normalized input components
+        """Forward pass with min-max normalization and physics constraints."""
+        # Extract and denormalize input components using min-max scaling
         lat_norm, lon_norm, time_norm, slope_norm, aspect_norm = x.split(1, dim=1)
         
-        # Denormalize inputs for physics calculations
-        lat = lat_norm * 90
-        lon = lon_norm * 180
-        time = time_norm * 24
-        slope = slope_norm * 180
-        aspect = aspect_norm * 360
+        # Denormalize inputs for physics calculations (preserving gradients)
+        lat = lat_norm * 180 - 90  # [-90, 90]
+        lon = lon_norm * 360 - 180  # [-180, 180]
+        time = time_norm * 24  # [0, 24]
+        slope = slope_norm * 90  # [0, 90]
+        aspect = aspect_norm * 360  # [0, 360]
         
         # Calculate day of year from denormalized time
         day_of_year = torch.floor(time / 24 * 365)
@@ -137,16 +136,18 @@ class SolarPINN(nn.Module):
         return final_prediction / self.solar_constant
 
 class PINNTrainer:
-    def __init__(self, model, learning_rate=0.001):
+    def __init__(self, model, learning_rate=0.002):
         self.model = model
-        # Add L2 regularization with weight decay
-        self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
-        # More aggressive learning rate scheduler
+        # Add L1 and L2 regularization
+        self.optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=1e-5  # L2 regularization
+        )
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', factor=0.2, patience=5, verbose=True
         )
-
-    def train_step(self, x_data, y_data):
+        def train_step(self, x_data, y_data):
         self.optimizer.zero_grad()
         
         # Forward pass
@@ -154,20 +155,29 @@ class PINNTrainer:
         
         # Calculate data loss
         data_loss = F.mse_loss(y_pred, y_data)
-        
-        # Extract time components for boundary conditions
-        lat = x_data[:, 0] * 90
-        time = x_data[:, 2] * 24
-        day_of_year = torch.floor(time / 24 * 365)
-        hour_of_day = time % 24
-        
-        # Calculate physics loss
-        sunrise, sunset = self.model.boundary_conditions(lat, day_of_year)
-        night_mask = (hour_of_day < sunrise) | (hour_of_day > sunset)
-        physics_loss = torch.mean(y_pred[night_mask] ** 2)
-        
-        # Combined loss with increased physics weight
-        total_loss = data_loss + 0.5 * physics_loss
+            
+            # Extract time components for boundary conditions
+            lat = x_data[:, 0] * 180 - 90  # Denormalize latitude
+            time = x_data[:, 2] * 24
+            day_of_year = torch.floor(time / 24 * 365)
+            hour_of_day = time % 24
+            
+            # Calculate physics loss components
+            sunrise, sunset = self.model.boundary_conditions(lat, day_of_year)
+            night_mask = (hour_of_day < sunrise) | (hour_of_day > sunset)
+            night_loss = torch.mean(y_pred[night_mask] ** 2)
+            
+            # Energy conservation constraint
+            energy_true = torch.sum(y_data)
+            energy_pred = torch.sum(y_pred)
+            conservation_loss = torch.abs(energy_true - energy_pred) / energy_true
+            
+            # L1 regularization
+            l1_reg = sum(torch.norm(p, 1) for p in self.model.parameters())
+            
+            # Combined loss with increased physics weight and new components
+            physics_loss = night_loss + 0.2 * conservation_loss
+            total_loss = data_loss + 0.8 * physics_loss + 1e-5 * l1_reg
         
         # Backward pass with retain_graph
         total_loss.backward(retain_graph=True)

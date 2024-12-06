@@ -167,13 +167,15 @@ def main():
             ]]).float()
             predicted_irradiance = model(current_input).item() * model.solar_constant
         
-        # Calculate physics-based irradiance
+        # Calculate physics-based irradiance and efficiency
         lat_tensor = torch.tensor([latitude], dtype=torch.float32)
         hour_tensor = torch.tensor([hour], dtype=torch.float32)
-        physics_irradiance = physics_model.calculate_irradiance(
+        results = physics_model.calculate_irradiance(
             latitude=lat_tensor,
             time=hour_tensor
-        ).item()
+        )
+        physics_irradiance = results['irradiance'].item()
+        efficiency = results['efficiency'].item()
         
         # Display predictions section
         col1, col2 = st.columns(2)
@@ -183,6 +185,7 @@ def main():
         with col2:
             st.subheader("Physics Calculation")
             st.write(f"Physics-based Irradiance: {physics_irradiance:.2f} W/m²")
+            st.write(f"Panel Efficiency: {efficiency:.2%}")
         
         # Calculate accuracy metrics
         accuracy_ratio = min(predicted_irradiance, physics_irradiance) / max(predicted_irradiance, physics_irradiance) * 100

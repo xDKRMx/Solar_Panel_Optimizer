@@ -38,17 +38,12 @@ def create_surface_plot(model, latitude, longitude, time, resolution=30):
         for i in range(resolution):
             for j in range(resolution):
                 # Create input tensor for single point
-                # Calculate seasonal weight
-                day_of_year = torch.floor(time / 24 * 365)
-                seasonal_weight = torch.abs(torch.sin(2 * torch.pi * day_of_year / 365))
-                
                 x_data = torch.tensor([[
                     latitude.item() / 90,
                     longitude.item() / 180,
                     time.item() / 24,
                     slopes[i].item() / 180,
-                    aspects[j].item() / 360,
-                    seasonal_weight.item()
+                    aspects[j].item() / 360
                 ]], dtype=torch.float32)
                 
                 # Get prediction

@@ -36,15 +36,10 @@ def main():
     # Calculate predictions and metrics
     try:
         with torch.no_grad():
-            # Calculate seasonal weight
-            day_of_year = torch.floor(hour / 24 * 365)
-            seasonal_weight = torch.abs(torch.sin(2 * torch.pi * day_of_year / 365))
-            
             current_input = torch.tensor([[
                 latitude/90, longitude/180, 
                 hour/24, 0/180,  # Default slope
-                180/360,  # Default aspect (south-facing)
-                seasonal_weight  # Add seasonal weight
+                180/360  # Default aspect (south-facing)
             ]], dtype=torch.float32)
             predicted_irradiance = model(current_input).item() * model.solar_constant
 

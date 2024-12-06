@@ -39,7 +39,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "streamlit run main.py --server.port 5000"
+args = "streamlit run main.py --server.port 5000 --server.address 0.0.0.0"
 waitForPort = 5000
 
 [[workflows.workflow]]
@@ -85,7 +85,7 @@ task = "shell.exec"
 args = "python3 visualize_results.py"
 
 [deployment]
-run = ["sh", "-c", "streamlit run main.py --server.port 5000"]
+run = ["sh", "-c", "streamlit run main.py --server.port 5000 --server.address 0.0.0.0"]
 
 [[ports]]
 localPort = 5000

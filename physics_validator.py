@@ -49,6 +49,12 @@ class SolarPhysicsIdeal:
 
     def calculate_irradiance(self, latitude, time, slope=0, panel_azimuth=0):
         """Calculate the total solar irradiance at the surface under ideal conditions."""
+        # Ensure inputs are tensors with proper dtype
+        latitude = torch.as_tensor(latitude, dtype=torch.float32)
+        time = torch.as_tensor(time, dtype=torch.float32)
+        slope = torch.as_tensor(slope, dtype=torch.float32)
+        panel_azimuth = torch.as_tensor(panel_azimuth, dtype=torch.float32)
+        
         # Convert day of year from time
         day_of_year = torch.floor(time / 24 * 365)
         

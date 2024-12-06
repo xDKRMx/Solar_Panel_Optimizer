@@ -191,7 +191,7 @@ def main():
         with col2:
             st.subheader("Physics Calculation")
             st.write(f"Physics-based Irradiance: {physics_irradiance:.2f} W/m²")
-            st.write(f"Panel Efficiency: {efficiency*100:.1f}%")
+            st.write(f"{efficiency*100:.1f}%")
         
         # Calculate accuracy metrics
         accuracy_ratio = min(predicted_irradiance, physics_irradiance) / max(predicted_irradiance, physics_irradiance) * 100

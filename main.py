@@ -13,22 +13,11 @@ def main():
     # Initialize physics model at the start
     physics_model = SolarPhysicsIdeal()
     
-    # Load the trained model with enhanced error handling and logging
+    # Load the trained model
     try:
-        st.write("Debug: Initializing app...")
-        st.write("Debug: Attempting to load model...")
         model = load_model('best_solar_pinn_ideal.pth')
-        st.write("Debug: Model loaded successfully!")
-    except FileNotFoundError as e:
-        st.error(f"Model file not found: {str(e)}")
-        st.write("Debug: Please ensure the model file 'best_solar_pinn_ideal.pth' exists in the current directory")
-        st.write(f"Debug: Current error details - {type(e).__name__}: {str(e)}")
-        return
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
-        st.write(f"Debug: Detailed error information - {type(e).__name__}: {str(e)}")
-        import traceback
-        st.write("Debug: Stack trace:", traceback.format_exc())
         return
     
     # Sidebar inputs
@@ -75,39 +64,38 @@ def main():
         
         # Determine color based on accuracy ratio
         if accuracy_ratio > 85:
-            metrics_color = "rgb(84, 52, 39)"  # Brown color (previous state)
+            metrics_color = "#1b4332"  # Green
         elif accuracy_ratio > 70:
-            metrics_color = "rgb(84, 52, 39)"  # Medium brown
+            metrics_color = "#ffaa00"  # Orange
         else:
-            metrics_color = "rgb(91, 47, 47)"  # Dark red
+            metrics_color = "#ff4444"  # Red
         
-        # Display accuracy metrics with simplified styling
+        # Display accuracy metrics with dynamic styling
         st.markdown("""
             <style>
             .metrics-box {
                 padding: 10px;
                 border-radius: 10px;
-                color: white;
-                font-family: sans-serif;
+                margin: 10px 0;
             }
             .metrics-content {
                 margin: 0;
                 font-size: 0.9em;
             }
             .metrics-header {
+                margin: 0 0 8px 0;
                 font-size: 1.1em;
                 font-weight: bold;
-                margin-bottom: 5px;
             }
             </style>
         """, unsafe_allow_html=True)
         
         st.markdown(f"""
-            <div style='padding: 10px; border-radius: 10px; background-color: {metrics_color}; color: white;'>
-                <div style='font-size: 1.1em; font-weight: bold; margin-bottom: 5px;'>Accuracy Metrics</div>
-                <div style='font-size: 0.9em;'>
-                    Accuracy Ratio: {accuracy_ratio:.2f}%<br/>
-                    Relative Error: {relative_error:.2f}%
+            <div class='metrics-box' style='background-color: {metrics_color};'>
+                <div class='metrics-content'>
+                    <p class='metrics-header'>Accuracy Metrics</p>
+                    <p>Accuracy Ratio: {accuracy_ratio:.2f}%</p>
+                    <p>Relative Error: {relative_error:.2f}%</p>
                 </div>
             </div>
         """, unsafe_allow_html=True)

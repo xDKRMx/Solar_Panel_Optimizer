@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from solar_pinn_ideal import SolarPINN
 from physics_validator import SolarPhysicsIdeal
 from visualize_results import create_surface_plot, load_model
@@ -31,71 +31,100 @@ def main():
     day_of_year = st.sidebar.slider("Day of Year", 1, 365, 182)
     hour = st.sidebar.slider("Hour of Day", 0.0, 24.0, 12.0, 0.1)
     
+    # Calculate predictions and metrics
+    try:
+        with torch.no_grad():
+            current_input = torch.tensor([[
+                latitude/90, longitude/180, 
+                hour/24, 0/180,  # Default slope
+                180/360  # Default aspect (south-facing)
+            ]]).float()
+            predicted_irradiance = model(current_input).item() * model.solar_constant
+        
+        # Calculate physics-based irradiance
+        lat_tensor = torch.tensor([latitude], dtype=torch.float32)
+        hour_tensor = torch.tensor([hour], dtype=torch.float32)
+        physics_irradiance = physics_model.calculate_irradiance(
+            latitude=lat_tensor,
+            time=hour_tensor
+        ).item()
+        
+        # Display predictions section
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("PINN Prediction")
+            st.write(f"Predicted Irradiance: {predicted_irradiance:.2f} W/m²")
+        with col2:
+            st.subheader("Physics Calculation")
+            st.write(f"Physics-based Irradiance: {physics_irradiance:.2f} W/m²")
+        
+        # Calculate accuracy metrics
+        accuracy_ratio = min(predicted_irradiance, physics_irradiance) / max(predicted_irradiance, physics_irradiance) * 100
+        relative_error = abs(predicted_irradiance - physics_irradiance) / physics_irradiance * 100
+        
+        # Determine color based on accuracy ratio
+        if accuracy_ratio > 85:
+            metrics_color = "#1b4332"  # Green
+        elif accuracy_ratio > 70:
+            metrics_color = "#ffaa00"  # Orange
+        else:
+            metrics_color = "#ff4444"  # Red
+        
+        # Display accuracy metrics with dynamic styling
+        st.markdown("""
+            <style>
+            .metrics-box {
+                padding: 10px;
+                border-radius: 10px;
+                margin: 10px 0;
+            }
+            .metrics-content {
+                margin: 0;
+                font-size: 0.9em;
+            }
+            .metrics-header {
+                margin: 0 0 8px 0;
+                font-size: 1.1em;
+                font-weight: bold;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+            <div class='metrics-box' style='background-color: {metrics_color};'>
+                <div class='metrics-content'>
+                    <p class='metrics-header'>Accuracy Metrics</p>
+                    <p>Accuracy Ratio: {accuracy_ratio:.2f}%</p>
+                    <p>Relative Error: {relative_error:.2f}%</p>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Error calculating predictions: {str(e)}")
+
     # Create 3D visualization
     if st.button("Generate 3D Surface Plot"):
         with st.spinner("Generating visualization..."):
             try:
+                
+                # Generate and display the 3D plot
                 fig, metrics = create_surface_plot(model, latitude, longitude, hour)
+                st.plotly_chart(fig, use_container_width=True)
                 
-                # Display predicted and physics-based values
-                st.subheader("Solar Panel Performance Metrics")
-                
-                # Calculate current predicted and physics-based values
-                with torch.no_grad():
-                    current_input = torch.tensor([[
-                        latitude/90, longitude/180, 
-                        hour/24, metrics['optimal_slope']/180, 
-                        metrics['optimal_aspect']/360
-                    ]]).float()
-                    predicted_irradiance = model(current_input).item() * model.solar_constant
-                
-                try:
-                    # Convert inputs to tensors with proper dtype
-                    lat_tensor = torch.tensor([latitude], dtype=torch.float32)
-                    hour_tensor = torch.tensor([hour], dtype=torch.float32)
-                    
-                    current_irradiance = physics_model.calculate_irradiance(
-                        latitude=lat_tensor,
-                        time=hour_tensor
-                    ).item()
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("PINN Predicted Irradiance", f"{predicted_irradiance:.1f} W/m²")
-                        st.metric("Optimal Slope", f"{metrics['optimal_slope']:.1f}°")
-                    with col2:
-                        st.metric("Physics-based Irradiance", f"{current_irradiance:.1f} W/m²")
-                        st.metric("Optimal Aspect", f"{metrics['optimal_aspect']:.1f}°")
-                except Exception as e:
-                    st.error(f"Error calculating irradiance: {str(e)}")
-                
-                # Display the plot
-                st.pyplot(fig)
-                
-                # Efficiency metrics section
-                st.subheader("Efficiency Analysis")
-                efficiency_ratio = metrics['max_efficiency']
-                st.progress(float(efficiency_ratio))
-                st.write(f"Maximum Efficiency: {efficiency_ratio:.1%}")
-                
-                # Display relative efficiency at current settings
-                relative_efficiency = predicted_irradiance / (model.solar_constant * efficiency_ratio)
-                st.write(f"Relative Efficiency at Current Settings: {relative_efficiency:.1%}")
+                # Display optimal parameters in green box
+                st.markdown(f"""
+                    <div class='accuracy-box'>
+                        <h3>Optimal Parameters:</h3>
+                        <ul>
+                            <li>Slope: {metrics['optimal_slope']:.1f}°</li>
+                            <li>Aspect: {metrics['optimal_aspect']:.1f}°</li>
+                            <li>Expected Efficiency: {metrics['max_efficiency']:.3f}</li>
+                        </ul>
+                    </div>
+                """, unsafe_allow_html=True)
                 
             except Exception as e:
                 st.error(f"Error generating visualization: {str(e)}")
-    
-    # Calculate current irradiance using physics model
-    try:
-        current_irradiance = physics_model.calculate_irradiance(
-            latitude=torch.tensor([latitude]),
-            time=torch.tensor([hour])
-        )
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("Current Conditions")
-        st.sidebar.info(f"Estimated Irradiance: {current_irradiance.item():.2f} W/m²")
-    except Exception as e:
-        st.sidebar.error(f"Error calculating current irradiance: {str(e)}")
 
 if __name__ == "__main__":
     main()

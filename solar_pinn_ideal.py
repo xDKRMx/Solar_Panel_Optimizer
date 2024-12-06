@@ -28,13 +28,16 @@ class SolarPINN(nn.Module):
         self.atmospheric_extinction = 0.1  # Idealized clear-sky extinction coefficient
 
     def setup_network(self, input_dim):
-        """Setup neural network architecture."""
+        """Setup neural network architecture with batch normalization."""
         self.physics_net = nn.Sequential(
             PhysicsInformedLayer(input_dim, 128),
+            nn.BatchNorm1d(128),
             nn.Tanh(),
             PhysicsInformedLayer(128, 256),
+            nn.BatchNorm1d(256),
             nn.Tanh(),
             PhysicsInformedLayer(256, 128),
+            nn.BatchNorm1d(128),
             nn.Tanh(),
             PhysicsInformedLayer(128, 1)
         )
@@ -134,7 +137,7 @@ class SolarPINN(nn.Module):
         return final_prediction / self.solar_constant
 
 class PINNTrainer:
-    def __init__(self, model, learning_rate=0.001):  # Fixed learning rate as specified
+    def __init__(self, model, learning_rate=0.001):
         self.model = model
         self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 

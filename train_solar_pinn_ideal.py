@@ -4,10 +4,20 @@ import torch.nn.functional as F
 from solar_pinn_ideal import SolarPINN, PINNTrainer
 from physics_validator import SolarPhysicsIdeal
 
-def generate_training_data(n_samples=5000, validation_split=0.2):
-    """Generate synthetic training data for ideal clear sky conditions."""
-    # Generate random input parameters with uniform sampling
-    latitude = (torch.rand(n_samples) * 180 - 90).requires_grad_()  # -90 to 90 degrees
+def generate_training_data(n_samples=2000, validation_split=0.2):
+    """Generate synthetic training data for ideal clear sky conditions with enhanced sampling."""
+    # Generate more samples for problematic latitude range (-90° to +60°)
+    n_focused = int(n_samples * 0.7)  # 70% of samples in target range
+    n_regular = n_samples - n_focused
+    
+    # Generate focused samples for -90° to +60° range
+    lat_focused = (torch.rand(n_focused) * 150 - 90).requires_grad_()  # -90 to +60 degrees
+    
+    # Generate regular samples for remaining range
+    lat_regular = (torch.rand(n_regular) * 30 + 60).requires_grad_()  # +60 to +90 degrees
+    
+    # Combine latitude samples
+    latitude = torch.cat([lat_focused, lat_regular])
     
     # Generate other parameters
     longitude = (torch.rand(n_samples) * 360 - 180).requires_grad_()  # -180 to 180 degrees
@@ -65,12 +75,12 @@ def main():
     # Generate training and validation data
     x_train, y_train, x_val, y_val = generate_training_data()
     
-    # Training parameters
-    n_epochs = 300
-    batch_size = 64  # Decreased batch size as specified
+    # Enhanced training parameters
+    n_epochs = 300  # Increased epochs for better convergence
+    batch_size = 128  # Larger batch size for stable training
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')
-    patience = 20  # Standard patience value
+    patience = 30  # Increased patience for better convergence
     patience_counter = 0
     
     # Learning rate scheduler
@@ -80,8 +90,10 @@ def main():
         gamma=0.5
     )
     
-    # Constant physics weight as specified
-    physics_weight = 0.1
+    # Physics loss weight scheduling
+    initial_physics_weight = 0.15
+    max_physics_weight = 0.3
+    physics_weight = initial_physics_weight
     
     print("Starting training...")
     print(f"Training samples: {len(x_train)}, Validation samples: {len(x_val)}")

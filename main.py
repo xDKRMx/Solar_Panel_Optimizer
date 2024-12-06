@@ -63,7 +63,12 @@ def main():
         relative_error = abs(predicted_irradiance - physics_irradiance) / physics_irradiance * 100
         
         # Determine color based on accuracy ratio
-        metrics_color = "rgb(84, 52, 19)" if accuracy_ratio > 50 else "rgb(91, 47, 47)"
+        if accuracy_ratio > 85:
+            metrics_color = "rgb(34, 139, 34)"  # Green for high accuracy
+        elif accuracy_ratio > 50:
+            metrics_color = "rgb(84, 52, 19)"   # Brown for medium accuracy
+        else:
+            metrics_color = "rgb(91, 47, 47)"   # Dark red for low accuracy
         
         # Display accuracy metrics with dynamic styling
         st.markdown("""

@@ -7,6 +7,11 @@ class SolarPhysicsIdeal:
         self.solar_constant = 1367.0  # Solar constant, S (W/m²)
         self.extinction_coefficient = 0.1  # Idealized extinction coefficient for clear sky
         self.reference_efficiency = 0.20  # Reference efficiency at standard test conditions (20%)
+        
+        # Temperature correction parameters
+        self.temp_coefficient = -0.004  # β, temperature coefficient (/°C)
+        self.ref_temperature = 25.0     # Tref, reference temperature (°C)
+        self.noct = 45.0               # NOCT, Nominal Operating Cell Temperature (°C)
 
     def calculate_declination(self, day_of_year):
         """Calculate the solar declination angle (δ) for a given day of the year."""
@@ -92,13 +97,17 @@ class SolarPhysicsIdeal:
         """Calculate the hour angle (h) based on the time of day."""
         return torch.deg2rad(15 * (time - 12))
 
-    def calculate_irradiance(self, latitude, time, slope=0, panel_azimuth=0):
-        """Calculate the total solar irradiance and efficiency at the surface under ideal conditions.
+    def calculate_irradiance(self, latitude, time, slope=0, panel_azimuth=0, ambient_temperature=25.0):
+        """Calculate the total solar irradiance and efficiency at the surface with temperature correction.
         
-        The efficiency is calculated using the formula: η = ηref * fsurf
+        The efficiency is calculated using the formula: η = ηref * fsurf * [1 + β(Tc - Tref)]
         where:
-        ηref: Reference efficiency at standard test conditions
-        fsurf: Surface orientation factor"""
+        - ηref: Reference efficiency at standard test conditions
+        - fsurf: Surface orientation factor
+        - β: Temperature coefficient
+        - Tc: Cell temperature = Ta + (I/800) * (NOCT-20)
+        - Tref: Reference temperature
+        - Ta: Ambient temperature"""
         # Ensure inputs are tensors with proper dtype
         latitude = torch.as_tensor(latitude, dtype=torch.float32)
         time = torch.as_tensor(time, dtype=torch.float32)
@@ -133,15 +142,23 @@ class SolarPhysicsIdeal:
         # Calculate irradiance using atmospheric transmission and surface orientation
         irradiance = self.solar_constant * transmission * surface_orientation
         
-        # Calculate efficiency using the physically correct formulation: η = ηref * fsurf
-        # where fsurf is the surface orientation factor that accounts for panel tilt and azimuth
-        # and ηref is the reference efficiency at standard test conditions (20%)
-        efficiency = self.reference_efficiency * surface_orientation
+        # Calculate cell temperature using the provided formula
+        # Tc = Ta + (I/800) * (NOCT-20)
+        cell_temperature = ambient_temperature + (irradiance/800) * (self.noct - 20)
+        
+        # Calculate temperature correction factor: [1 + β(Tc - Tref)]
+        temp_correction = 1 + self.temp_coefficient * (cell_temperature - self.ref_temperature)
+        
+        # Calculate final efficiency with temperature correction: η = ηref * fsurf * [1 + β(Tc - Tref)]
+        base_efficiency = self.reference_efficiency * surface_orientation
+        efficiency = base_efficiency * temp_correction
         
         return {
             'irradiance': torch.clamp(irradiance, min=0.0),  # Ensure non-negative irradiance
             'efficiency': torch.clamp(efficiency, min=0.0, max=self.reference_efficiency),  # Bounded efficiency
-            'surface_factor': surface_orientation  # Return surface orientation factor for debugging
+            'surface_factor': surface_orientation,  # Surface orientation factor
+            'cell_temperature': cell_temperature,  # Cell temperature for debugging
+            'temp_correction': temp_correction  # Temperature correction factor for debugging
         }
 
 def calculate_metrics(y_true, y_pred):

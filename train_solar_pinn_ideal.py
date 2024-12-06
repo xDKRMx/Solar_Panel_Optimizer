@@ -4,14 +4,22 @@ import torch.nn.functional as F
 from solar_pinn_ideal import SolarPINN, PINNTrainer
 from physics_validator import SolarPhysicsIdeal
 
-def generate_training_data(n_samples=1000, validation_split=0.2):
-    """Generate synthetic training data for ideal clear sky conditions."""
+def generate_training_data(n_samples=2000, validation_split=0.2):
+    """Generate synthetic training data with enhanced night time handling."""
     # Generate random input parameters with normalization
     latitude = (torch.rand(n_samples) * 180 - 90).requires_grad_()  # -90 to 90 degrees
     longitude = (torch.rand(n_samples) * 360 - 180).requires_grad_()  # -180 to 180 degrees
     time = (torch.rand(n_samples) * 24).requires_grad_()  # 0 to 24 hours
     slope = (torch.rand(n_samples) * 45).requires_grad_()  # 0 to 45 degrees slope
     aspect = (torch.rand(n_samples) * 360).requires_grad_()  # 0 to 360 degrees aspect
+    
+    # Add more samples around sunrise and sunset times
+    twilight_samples = int(n_samples * 0.2)  # 20% of samples around twilight periods
+    twilight_times = torch.cat([
+        torch.normal(6, 1, (twilight_samples//2,)),  # Around sunrise
+        torch.normal(18, 1, (twilight_samples//2,))  # Around sunset
+    ]).requires_grad_()
+    time[-twilight_samples:] = torch.clamp(twilight_times, 0, 24)
     
     # Normalize inputs
     lat_norm = latitude / 90
@@ -28,11 +36,10 @@ def generate_training_data(n_samples=1000, validation_split=0.2):
     y_data = []
     
     for i in range(n_samples):
-        # Use original values for physics calculation
         irradiance = physics_model.calculate_irradiance(
             latitude[i], time[i], slope[i], aspect[i]
         )
-        # Normalize irradiance
+        # Normalize irradiance with enhanced night time handling
         irradiance_norm = irradiance / physics_model.solar_constant
         y_data.append(irradiance_norm)
     
@@ -63,30 +70,36 @@ def main():
     # Generate training and validation data
     x_train, y_train, x_val, y_val = generate_training_data()
     
-    # Training parameters
-    n_epochs = 200
-    batch_size = 64  # Increased batch size
+    # Enhanced training parameters
+    n_epochs = 500  # Increased epochs
+    batch_size = 128  # Increased batch size for better gradient estimates
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')
-    patience = 20
+    patience = 30  # Increased patience
     patience_counter = 0
+    min_lr = 1e-5  # Minimum learning rate
     
-    # Learning rate scheduler
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        trainer.optimizer, 
-        step_size=50,
-        gamma=0.5
-    )
+    # Learning rate scheduler with warm-up and cosine annealing
+    def get_lr(epoch):
+        warmup_epochs = 50
+        if epoch < warmup_epochs:
+            return 0.001 * (epoch + 1) / warmup_epochs
+        else:
+            return max(min_lr, 0.001 * 0.5 * (1 + np.cos((epoch - warmup_epochs) * np.pi / (n_epochs - warmup_epochs))))
     
-    # Physics loss weight scheduling
-    initial_physics_weight = 0.15
-    max_physics_weight = 0.3
-    physics_weight = initial_physics_weight
+    # Physics loss weight scheduling with gradual increase
+    initial_physics_weight = 0.1
+    max_physics_weight = 0.5
     
     print("Starting training...")
     print(f"Training samples: {len(x_train)}, Validation samples: {len(x_val)}")
     
     for epoch in range(n_epochs):
+        # Update learning rate
+        current_lr = get_lr(epoch)
+        for param_group in trainer.optimizer.param_groups:
+            param_group['lr'] = current_lr
+        
         # Training
         model.train()
         epoch_loss = 0
@@ -100,14 +113,14 @@ def main():
             y_batch = y_train[batch_indices]
             
             # Update physics weight gradually
-            physics_weight = initial_physics_weight + (max_physics_weight - initial_physics_weight) * (epoch / n_epochs)
+            physics_weight = min(
+                initial_physics_weight + (max_physics_weight - initial_physics_weight) * (epoch / n_epochs),
+                max_physics_weight
+            )
             
             # Training step with current physics weight
             loss = trainer.train_step(x_batch, y_batch, physics_weight=physics_weight)
             epoch_loss += loss
-            
-        # Step the learning rate scheduler
-        scheduler.step()
         
         avg_train_loss = epoch_loss / n_batches
         
@@ -115,7 +128,7 @@ def main():
         model.eval()
         with torch.no_grad():
             try:
-                # PINN predictions with gradient tracking disabled
+                # PINN predictions
                 y_pred = model(x_val)
                 val_loss = F.mse_loss(y_pred, y_val)
                 
@@ -144,12 +157,13 @@ def main():
             print(f"Early stopping triggered at epoch {epoch+1}")
             break
         
-        if (epoch + 1) % 5 == 0:  # Print more frequently
+        if (epoch + 1) % 5 == 0:
             print(f"\nEpoch [{epoch+1}/{n_epochs}]")
             print(f"Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}")
+            print(f"Learning Rate: {current_lr:.6f}, Physics Weight: {physics_weight:.3f}")
             print(f"Validation Metrics:")
-            print(f"MAE: {val_metrics['mae']:.2f} W/m²")
-            print(f"RMSE: {val_metrics['rmse']:.2f} W/m²")
+            print(f"MAE: {val_metrics['mae']:.4f}")
+            print(f"RMSE: {val_metrics['rmse']:.4f}")
             print(f"R²: {val_metrics['r2']:.4f}")
             
             # Print example predictions
@@ -158,7 +172,7 @@ def main():
             y_true = y_val[sample_idx]
             print("\nSample Predictions vs True Values:")
             for i in range(5):
-                print(f"Pred: {y_sample[i].item():.2f} W/m², True: {y_true[i].item():.2f} W/m²")
+                print(f"Pred: {y_sample[i].item():.4f}, True: {y_true[i].item():.4f}")
     
     print("Training completed!")
 

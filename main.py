@@ -12,6 +12,12 @@ def main():
     st.title("Solar Panel Placement Optimizer")
     st.write("Physics-Informed Neural Network for Optimal Solar Panel Placement")
     
+    def update_param(param_name):
+        if f'{param_name}_slider' in st.session_state and f'{param_name}_input' in st.session_state:
+            value = st.session_state[f'{param_name}_slider']
+            st.session_state[f'{param_name}_input'] = value
+            st.session_state[param_name] = value
+
     # Initialize session state
     if 'latitude' not in st.session_state:
         st.session_state.latitude = 45.0
@@ -19,6 +25,10 @@ def main():
         st.session_state.longitude = 0.0
     if 'show_map' not in st.session_state:
         st.session_state.show_map = False
+    if 'day_of_year' not in st.session_state:
+        st.session_state.day_of_year = 182
+    if 'hour' not in st.session_state:
+        st.session_state.hour = 12.0
     
     # Initialize physics model at the start
     physics_model = SolarPhysicsIdeal()
@@ -42,57 +52,79 @@ def main():
     # Latitude input with slider and number input
     lat_col1, lat_col2 = st.sidebar.columns([3, 1])
     with lat_col1:
-        latitude = st.slider("Latitude", -90.0, 90.0,
-            value=float(st.session_state.get('latitude', 45.0)),
-            key='latitude_slider'
+        latitude = st.slider(
+            "Latitude", -90.0, 90.0,
+            value=st.session_state.get('latitude', 45.0),
+            key='latitude_slider',
+            on_change=lambda: update_param('latitude')
         )
     with lat_col2:
-        st.write("")  # Add small spacing
-        latitude = st.number_input("", -90.0, 90.0,
-            value=float(st.session_state.get('latitude', 45.0)),
+        st.write("")
+        latitude = st.number_input(
+            "", -90.0, 90.0,
+            value=st.session_state.get('latitude', 45.0),
             key='latitude_input',
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            on_change=lambda: update_param('latitude')
         )
     
     # Longitude input with slider and number input
     lon_col1, lon_col2 = st.sidebar.columns([3, 1])
     with lon_col1:
-        longitude = st.slider("Longitude", -180.0, 180.0,
-            value=float(st.session_state.get('longitude', 0.0)),
-            key='longitude_slider'
+        longitude = st.slider(
+            "Longitude", -180.0, 180.0,
+            value=st.session_state.get('longitude', 0.0),
+            key='longitude_slider',
+            on_change=lambda: update_param('longitude')
         )
     with lon_col2:
-        st.write("")  # Add small spacing
-        longitude = st.number_input("", -180.0, 180.0,
-            value=float(st.session_state.get('longitude', 0.0)),
+        st.write("")
+        longitude = st.number_input(
+            "", -180.0, 180.0,
+            value=st.session_state.get('longitude', 0.0),
             key='longitude_input',
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            on_change=lambda: update_param('longitude')
         )
     
     # Day of Year input with slider and number input
     day_col1, day_col2 = st.sidebar.columns([3, 1])
     with day_col1:
-        day_of_year = st.slider("Day of Year", 1, 365, 182,
-            key='day_slider'
+        day_of_year = st.slider(
+            "Day of Year", 1, 365,
+            value=st.session_state.get('day_of_year', 182),
+            key='day_of_year_slider',
+            on_change=lambda: update_param('day_of_year')
         )
     with day_col2:
-        st.write("")  # Add small spacing
-        day_of_year = st.number_input("", 1, 365, 182,
-            key='day_input',
-            label_visibility="collapsed"
+        st.write("")
+        day_of_year = st.number_input(
+            "", 1, 365,
+            value=st.session_state.get('day_of_year', 182),
+            key='day_of_year_input',
+            label_visibility="collapsed",
+            on_change=lambda: update_param('day_of_year')
         )
     
     # Hour of Day input with slider and number input
     hour_col1, hour_col2 = st.sidebar.columns([3, 1])
     with hour_col1:
-        hour = st.slider("Hour of Day", 0.0, 24.0, 12.0, 0.1,
-            key='hour_slider'
+        hour = st.slider(
+            "Hour of Day", 0.0, 24.0,
+            value=st.session_state.get('hour', 12.0),
+            key='hour_slider',
+            step=0.1,
+            on_change=lambda: update_param('hour')
         )
     with hour_col2:
-        st.write("")  # Add small spacing
-        hour = st.number_input("", 0.0, 24.0, 12.0, 0.1,
+        st.write("")
+        hour = st.number_input(
+            "", 0.0, 24.0,
+            value=st.session_state.get('hour', 12.0),
             key='hour_input',
-            label_visibility="collapsed"
+            step=0.1,
+            label_visibility="collapsed",
+            on_change=lambda: update_param('hour')
         )
     
     # Update session state when values change

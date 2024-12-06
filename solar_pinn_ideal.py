@@ -121,7 +121,11 @@ class SolarPINN(nn.Module):
         
         # Re-dimensionalize the prediction and apply physical constraints
         prediction = prediction * self.solar_constant  # Convert normalized output back to W/m²
-        constrained_prediction = (prediction * 
+        
+        # Apply seasonal weight to modulate the prediction
+        seasonal_adjusted_prediction = prediction * (1.0 + 0.2 * seasonal_weight)  # Adjust prediction based on season
+        
+        constrained_prediction = (seasonal_adjusted_prediction * 
                                atmospheric_transmission * 
                                surface_factor)
         
@@ -159,13 +163,19 @@ class PINNTrainer:
         # Calculate physics loss
         sunrise, sunset = self.model.boundary_conditions(lat, day_of_year)
         night_mask = (hour_of_day < sunrise) | (hour_of_day > sunset)
-        physics_loss = torch.mean(y_pred[night_mask] ** 2)
         
-        # Combined loss with retain_graph
-        total_loss = data_loss + physics_weight * physics_loss
+        # Handle batch-specific physics weights
+        if isinstance(physics_weight, torch.Tensor):
+            # Ensure physics_weight matches the batch dimension
+            physics_weight = physics_weight.view(-1, 1)
+            # Calculate weighted physics loss per sample
+            sample_physics_loss = y_pred[night_mask] ** 2
+            physics_loss = torch.mean(sample_physics_loss * physics_weight[night_mask] if night_mask.any() else torch.tensor(0.0))
+        else:
+            physics_loss = torch.mean(y_pred[night_mask] ** 2) if night_mask.any() else torch.tensor(0.0)
         
-        # Backward pass with retain_graph
-        total_loss.backward(retain_graph=True)
+        # Combined loss (always scalar)
+        total_loss = data_loss + torch.mean(physics_loss)
         
         # Optimizer step
         self.optimizer.step()

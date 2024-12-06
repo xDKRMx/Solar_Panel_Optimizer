@@ -163,12 +163,14 @@ def main():
             north_weight = physics_weight
             
             # Apply hemisphere-specific physics weights
-            batch_weights = torch.where(is_south, 
-                                      torch.tensor(south_weight), 
-                                      torch.tensor(north_weight))
+            batch_weights = torch.where(
+                is_south,
+                torch.tensor(south_weight, dtype=torch.float32),
+                torch.tensor(north_weight, dtype=torch.float32)
+            )
             
             # Training step with dynamic weights
-            loss = trainer.train_step(x_batch, y_batch, physics_weight=batch_weights)
+            loss = trainer.train_step(x_batch, y_batch, physics_weight=batch_weights.to(x_batch.device))
             epoch_loss += loss
             
             # Update hemisphere-specific metrics

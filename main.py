@@ -12,6 +12,12 @@ def main():
     st.title("Solar Panel Placement Optimizer")
     st.write("Physics-Informed Neural Network for Optimal Solar Panel Placement")
     
+    # Initialize session state
+    if 'latitude' not in st.session_state:
+        st.session_state.latitude = 45.0
+    if 'longitude' not in st.session_state:
+        st.session_state.longitude = 0.0
+    
     # Initialize physics model at the start
     physics_model = SolarPhysicsIdeal()
     
@@ -147,18 +153,22 @@ def main():
             
             # Add a marker for the current location
             folium.Marker(
-                [latitude, longitude],
+                [st.session_state.get('latitude', latitude), 
+                 st.session_state.get('longitude', longitude)],
                 popup="Selected Location",
                 icon=folium.Icon(color="red", icon="info-sign"),
             ).add_to(m)
             
             # Display the map and get clicked coordinates
-            map_data = st_folium(m, height=400, width=700)
+            map_data = st_folium(m, height=400, width=700, key="map")
             
-            # Update coordinates if map is clicked
-            if map_data['last_clicked']:
-                st.session_state.latitude = map_data['last_clicked']['lat']
-                st.session_state.longitude = map_data['last_clicked']['lng']
+            if map_data['last_clicked'] is not None:
+                new_lat = map_data['last_clicked']['lat']
+                new_lng = map_data['last_clicked']['lng']
+                st.session_state['latitude'] = new_lat
+                st.session_state['longitude'] = new_lng
+                # Add success message
+                st.success(f"Location selected: {new_lat:.4f}°, {new_lng:.4f}°")
                 st.rerun()
                 
     except Exception as e:

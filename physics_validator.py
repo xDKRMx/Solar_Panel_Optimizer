@@ -120,6 +120,45 @@ class SolarPhysicsIdeal:
 
         return torch.clamp(irradiance, min=0.0)  # Ensure non-negative irradiance
 
+    def calculate_efficiency(self, latitude, time, slope=0, panel_azimuth=0, ref_efficiency=0.15):
+        """Calculate solar panel efficiency based on physical parameters.
+        
+        Args:
+            latitude: Location latitude in degrees
+            time: Time of day (hour)
+            slope: Panel slope angle in degrees
+            panel_azimuth: Panel azimuth angle in degrees
+            ref_efficiency: Reference efficiency under STC (default 0.15 or 15%)
+            
+        Returns:
+            Total efficiency including surface orientation effects
+        """
+        # Convert inputs to tensors
+        latitude = torch.as_tensor(latitude, dtype=torch.float32)
+        time = torch.as_tensor(time, dtype=torch.float32)
+        slope = torch.as_tensor(slope, dtype=torch.float32)
+        panel_azimuth = torch.as_tensor(panel_azimuth, dtype=torch.float32)
+        
+        # Calculate day of year from time
+        day_of_year = torch.floor(time / 24 * 365)
+        
+        # Calculate solar position
+        declination = self.calculate_declination(day_of_year)
+        hour_angle = self.calculate_hour_angle(time % 24)
+        cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)
+        cos_zenith = torch.clamp(cos_zenith, min=0.0)  # Ensure no negative values
+        
+        # Calculate surface orientation factor (fsurf)
+        surface_factor = self.calculate_surface_orientation_factor(
+            cos_zenith, slope, hour_angle, panel_azimuth
+        )
+        
+        # Calculate total efficiency
+        # η = ηref * fsurf
+        total_efficiency = ref_efficiency * surface_factor
+        
+        return torch.clamp(total_efficiency, min=0.0)  # Ensure non-negative efficiency
+
 def calculate_metrics(y_true, y_pred):
     """Calculate validation metrics between true and predicted values."""
     # Mean Absolute Error

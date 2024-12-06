@@ -5,65 +5,36 @@ from solar_pinn_ideal import SolarPINN, PINNTrainer
 from physics_validator import SolarPhysicsIdeal
 
 def generate_training_data(n_samples=1000, validation_split=0.2):
-    """Generate synthetic training data for ideal clear sky conditions with balanced hemisphere sampling."""
-    # Define latitude ranges for stratified sampling
-    n_south = int(n_samples * 0.5)  # Ensure 50% of samples are from southern hemisphere
-    n_deep_south = int(n_south * 0.4)  # 40% of southern samples from -90° to -45°
-    n_mid_south = n_south - n_deep_south  # Remaining southern samples from -45° to 0°
-    n_north = n_samples - n_south  # Northern hemisphere samples
+    """Generate synthetic training data for ideal clear sky conditions."""
+    # Generate random input parameters with normalization and better distribution
+    latitude = (torch.rand(n_samples) * 180 - 90).requires_grad_()  # -90 to 90 degrees
+    longitude = (torch.rand(n_samples) * 360 - 180).requires_grad_()  # -180 to 180 degrees
+    time = (torch.rand(n_samples) * 24).requires_grad_()  # 0 to 24 hours
+    slope = (torch.rand(n_samples) * 45).requires_grad_()  # 0 to 45 degrees slope
+    aspect = (torch.rand(n_samples) * 360).requires_grad_()  # 0 to 360 degrees aspect
     
-    # Generate stratified latitude samples
-    deep_south = (torch.rand(n_deep_south) * 45 - 90).requires_grad_()  # -90° to -45°
-    mid_south = (torch.rand(n_mid_south) * 45 - 45).requires_grad_()  # -45° to 0°
-    north = (torch.rand(n_north) * 90).requires_grad_()  # 0° to 90°
+    # Ensure inputs are on CPU and have correct dtype
+    latitude = latitude.cpu().float()
+    longitude = longitude.cpu().float()
+    time = time.cpu().float()
+    slope = slope.cpu().float()
+    aspect = aspect.cpu().float()
     
-    # Combine latitude samples
-    latitude = torch.cat([deep_south, mid_south, north])
-    
-    # Generate other parameters
-    longitude = (torch.rand(n_samples) * 360 - 180).requires_grad_()  # -180° to 180°
-    
-    # Generate seasonal variations
-    seasons = torch.linspace(0, 365, 4)  # Four seasons
-    time_offsets = torch.randn(n_samples) * 2 + 12  # Peak around noon with variation
-    time = torch.remainder(time_offsets, 24).requires_grad_()  # Ensure time is within 0-24
-    
-    slope = (torch.rand(n_samples) * 45).requires_grad_()  # 0° to 45° slope
-    aspect = (torch.rand(n_samples) * 360).requires_grad_()  # 0° to 360° aspect
-    
-    # Enhanced normalization for better hemisphere representation
-    lat_norm = torch.where(
-        latitude < 0,
-        latitude / 90 * 1.2,  # Increase weight for southern hemisphere
-        latitude / 90
-    )
-    
-    # Calculate seasonal weights
-    day_of_year = torch.floor(time / 24 * 365)
-    seasonal_weight = torch.abs(torch.sin(2 * torch.pi * day_of_year / 365))
-    
-    # Apply seasonal corrections to normalization
+    # Normalize inputs
+    lat_norm = latitude / 90
     lon_norm = longitude / 180
     time_norm = time / 24
     slope_norm = slope / 180
     aspect_norm = aspect / 360
     
-    # Create normalized input tensor with seasonal information
-    x_data = torch.stack([
-        lat_norm,
-        lon_norm,
-        time_norm,
-        slope_norm,
-        aspect_norm,
-        seasonal_weight  # Add seasonal weight as additional feature
-    ], dim=1).float()
+    # Create normalized input tensor
+    x_data = torch.stack([lat_norm, lon_norm, time_norm, slope_norm, aspect_norm], dim=1).float()
     
     # Calculate theoretical clear-sky irradiance using physics validator
     physics_model = SolarPhysicsIdeal()
     y_data = []
     
     for i in range(n_samples):
-        # Use original values for physics calculation
         irradiance = physics_model.calculate_irradiance(
             latitude[i], time[i], slope[i], aspect[i]
         )
@@ -100,7 +71,7 @@ def main():
     
     # Training parameters
     n_epochs = 200
-    batch_size = 64  # Increased batch size
+    batch_size = 32  # Restored to original batch size
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')
     patience = 20
@@ -113,75 +84,44 @@ def main():
         gamma=0.5
     )
     
-    # Dynamic physics loss weight scheduling based on hemisphere
-    initial_physics_weight = 0.15
-    max_physics_weight = 0.3
-    physics_weight = initial_physics_weight
-    
-    # Separate tracking for hemisphere performance
-    south_metrics = {'loss': float('inf'), 'samples': 0}
-    north_metrics = {'loss': float('inf'), 'samples': 0}
-    
-    # Enhanced validation sets for hemisphere-specific monitoring
-    def get_hemisphere_metrics(y_true, y_pred, latitude):
-        is_south = latitude < 0
-        south_mask = is_south
-        north_mask = ~is_south
-        
-        south_loss = F.mse_loss(y_pred[south_mask], y_true[south_mask]) if south_mask.any() else torch.tensor(0.0)
-        north_loss = F.mse_loss(y_pred[north_mask], y_true[north_mask]) if north_mask.any() else torch.tensor(0.0)
-        
-        return {
-            'south': south_loss.item(),
-            'north': north_loss.item(),
-            'south_samples': south_mask.sum().item(),
-            'north_samples': north_mask.sum().item()
-        }
+    # Fixed physics weight
+    physics_weight = 0.1  # Reset to original value
     
     print("Starting training...")
     print(f"Training samples: {len(x_train)}, Validation samples: {len(x_val)}")
     
     for epoch in range(n_epochs):
-        # Training
-        model.train()
-        epoch_loss = 0
-        
-        # Shuffle training data
-        indices = torch.randperm(len(x_train))
-        
-        for i in range(n_batches):
-            batch_indices = indices[i*batch_size:(i+1)*batch_size]
-            x_batch = x_train[batch_indices]
-            y_batch = y_train[batch_indices]
+        try:
+            # Training
+            model.train()
+            epoch_loss = 0
             
-            # Calculate hemisphere-specific weights
-            batch_latitudes = x_batch[:, 0] * 90  # Denormalize latitude
-            is_south = batch_latitudes < 0
+            # Shuffle training data
+            indices = torch.randperm(len(x_train))
             
-            # Adjust physics weight based on hemisphere performance
-            south_weight = physics_weight * 1.2 if south_metrics['loss'] > north_metrics['loss'] else physics_weight
-            north_weight = physics_weight
+            for i in range(n_batches):
+                try:
+                    batch_indices = indices[i*batch_size:(i+1)*batch_size]
+                    x_batch = x_train[batch_indices]
+                    y_batch = y_train[batch_indices]
+                    
+                    # Training step with fixed physics weight
+                    loss = trainer.train_step(x_batch, y_batch, physics_weight=physics_weight)
+                    
+                    # Check for NaN loss
+                    if torch.isnan(torch.tensor(loss)):
+                        print(f"NaN loss detected in batch {i}, skipping...")
+                        continue
+                        
+                    epoch_loss += loss
+                except Exception as e:
+                    print(f"Error in batch {i}: {str(e)}")
+                    continue
             
-            # Apply hemisphere-specific physics weights
-            batch_weights = torch.where(is_south, 
-                                      torch.tensor(south_weight), 
-                                      torch.tensor(north_weight))
-            
-            # Training step with dynamic weights
-            loss = trainer.train_step(x_batch, y_batch, physics_weight=batch_weights)
-            epoch_loss += loss
-            
-            # Update hemisphere-specific metrics
-            hemisphere_metrics = get_hemisphere_metrics(y_batch, model(x_batch), batch_latitudes)
-            south_metrics['loss'] = hemisphere_metrics['south']
-            south_metrics['samples'] = hemisphere_metrics['south_samples']
-            north_metrics['loss'] = hemisphere_metrics['north']
-            north_metrics['samples'] = hemisphere_metrics['north_samples']
-            
-        # Step the learning rate scheduler
-        scheduler.step()
-        
         avg_train_loss = epoch_loss / n_batches
+            
+            # Step the learning rate scheduler
+            scheduler.step()
         
         # Validation
         model.eval()
@@ -216,7 +156,7 @@ def main():
             print(f"Early stopping triggered at epoch {epoch+1}")
             break
         
-        if (epoch + 1) % 5 == 0:  # Print more frequently
+        if (epoch + 1) % 5 == 0:
             print(f"\nEpoch [{epoch+1}/{n_epochs}]")
             print(f"Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}")
             print(f"Validation Metrics:")

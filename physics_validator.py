@@ -10,7 +10,12 @@ class SolarPhysicsIdeal:
         # Temperature-related constants
         self.temp_coefficient = -0.004  # Temperature coefficient (β), typically -0.004 K^-1
         self.ref_temperature = 25.0  # Reference temperature (Tref) at STC, °C
-        self.noct = 45.0  # Nominal Operating Cell Temperature, °C
+        self.base_noct = 45.0  # Base Nominal Operating Cell Temperature, °C
+        
+        # Seasonal adjustment parameters
+        self.seasonal_temp_variation = 15.0  # Maximum temperature variation across seasons (°C)
+        self.seasonal_noct_variation = 3.0  # NOCT variation across seasons (°C)
+        self.seasonal_extinction_variation = 0.02  # Seasonal variation in extinction coefficient
 
     def calculate_declination(self, day_of_year):
         """Calculate the solar declination angle (δ) for a given day of the year."""
@@ -61,12 +66,33 @@ class SolarPhysicsIdeal:
         air_mass = basic_am / high_lat_correction
         return torch.clamp(air_mass, min=1.0)
 
-    def calculate_atmospheric_transmission(self, air_mass):
-        """Calculate the atmospheric transmission factor (T)."""
-        base_transmission = torch.exp(-self.extinction_coefficient * air_mass)
+    def calculate_atmospheric_transmission(self, air_mass, day_of_year, latitude):
+        """Calculate the atmospheric transmission factor (T) with seasonal variations.
+        
+        Args:
+            air_mass: Calculated air mass
+            day_of_year: Day of the year (1-365)
+            latitude: Location latitude in degrees
+            
+        Returns:
+            Atmospheric transmission factor
+        """
+        # Calculate seasonal extinction coefficient
+        abs_lat = abs(float(latitude))
+        phase_shift = 0 if latitude >= 0 else 182.5
+        season_factor = torch.cos(2 * torch.pi * ((day_of_year + phase_shift) / 365))
+        lat_scale = (abs_lat / 90) ** 0.5
+        
+        # Adjust extinction coefficient for seasonal variations
+        seasonal_extinction = (self.extinction_coefficient + 
+                             self.seasonal_extinction_variation * season_factor * lat_scale)
+        
+        # Calculate transmission components with seasonal adjustment
+        base_transmission = torch.exp(-seasonal_extinction * air_mass)
         rayleigh = torch.exp(-0.0903 * air_mass ** 0.84)
-        aerosol = torch.exp(-0.08 * air_mass ** 0.95)
-        ozone = torch.exp(-0.0042 * air_mass ** 0.95)
+        aerosol = torch.exp(-0.08 * (1 + 0.1 * season_factor) * air_mass ** 0.95)
+        ozone = torch.exp(-0.0042 * (1 + 0.05 * season_factor) * air_mass ** 0.95)
+        
         return base_transmission * rayleigh * aerosol * ozone
 
     def calculate_surface_orientation_factor(self, zenith_angle, slope, sun_azimuth, panel_azimuth):
@@ -84,20 +110,77 @@ class SolarPhysicsIdeal:
         """Calculate the hour angle (h) based on the time of day."""
         return torch.deg2rad(15 * (time - 12))
 
-    def calculate_cell_temperature(self, ambient_temp, irradiance):
-        """Calculate cell temperature using NOCT method.
+    def calculate_seasonal_ambient_temp(self, base_temp, day_of_year, latitude):
+        """Calculate seasonally adjusted ambient temperature.
         
         Args:
-            ambient_temp: Ambient temperature in °C
+            base_temp: Base ambient temperature in °C
+            day_of_year: Day of the year (1-365)
+            latitude: Location latitude in degrees
+            
+        Returns:
+            Seasonally adjusted ambient temperature in °C
+        """
+        # Convert latitude to absolute value for hemisphere adjustment
+        abs_lat = abs(float(latitude))
+        
+        # Adjust phase based on hemisphere (inverted seasons in Southern hemisphere)
+        phase_shift = 0 if latitude >= 0 else 182.5
+        
+        # Calculate seasonal temperature variation
+        # Maximum variation occurs on day 172 (summer) and day 355 (winter)
+        season_factor = torch.cos(2 * torch.pi * ((day_of_year + phase_shift) / 365))
+        
+        # Latitude scaling (stronger seasonal effects at higher latitudes)
+        lat_scale = (abs_lat / 90) ** 0.5
+        
+        # Calculate temperature adjustment
+        temp_adjustment = self.seasonal_temp_variation * season_factor * lat_scale
+        
+        return base_temp + temp_adjustment
+
+    def calculate_seasonal_noct(self, day_of_year, latitude):
+        """Calculate seasonally adjusted NOCT.
+        
+        Args:
+            day_of_year: Day of the year (1-365)
+            latitude: Location latitude in degrees
+            
+        Returns:
+            Seasonally adjusted NOCT in °C
+        """
+        # Similar seasonal variation as ambient temperature
+        abs_lat = abs(float(latitude))
+        phase_shift = 0 if latitude >= 0 else 182.5
+        
+        # NOCT varies with season due to average ambient conditions
+        season_factor = torch.cos(2 * torch.pi * ((day_of_year + phase_shift) / 365))
+        lat_scale = (abs_lat / 90) ** 0.5
+        
+        noct_adjustment = self.seasonal_noct_variation * season_factor * lat_scale
+        return self.base_noct + noct_adjustment
+
+    def calculate_cell_temperature(self, ambient_temp, irradiance, day_of_year, latitude):
+        """Calculate cell temperature using enhanced NOCT method with seasonal variations.
+        
+        Args:
+            ambient_temp: Base ambient temperature in °C
             irradiance: Solar irradiance in W/m²
+            day_of_year: Day of the year (1-365)
+            latitude: Location latitude in degrees
             
         Returns:
             Cell temperature in °C
         """
-        return ambient_temp + (irradiance / 800) * (self.noct - 20)
+        # Get seasonally adjusted ambient temperature and NOCT
+        adj_ambient_temp = self.calculate_seasonal_ambient_temp(ambient_temp, day_of_year, latitude)
+        adj_noct = self.calculate_seasonal_noct(day_of_year, latitude)
+        
+        # Calculate cell temperature with seasonal adjustments
+        return adj_ambient_temp + (irradiance / 800) * (adj_noct - 20)
 
     def calculate_efficiency(self, latitude, time, slope=0, panel_azimuth=0, ref_efficiency=0.15, ambient_temp=25):
-        """Calculate temperature-corrected solar panel efficiency.
+        """Calculate temperature-corrected solar panel efficiency with enhanced seasonal effects.
         
         Args:
             latitude: Location latitude in degrees
@@ -105,10 +188,10 @@ class SolarPhysicsIdeal:
             slope: Panel slope angle in degrees (β)
             panel_azimuth: Panel azimuth angle in degrees (φp)
             ref_efficiency: Reference efficiency under STC (default 0.15 or 15%)
-            ambient_temp: Ambient temperature in °C (default 25°C)
+            ambient_temp: Base ambient temperature in °C (default 25°C)
             
         Returns:
-            Temperature-corrected total efficiency
+            Temperature-corrected total efficiency including seasonal variations
         """
         # Convert inputs to tensors
         latitude = torch.as_tensor(latitude, dtype=torch.float32)
@@ -121,7 +204,7 @@ class SolarPhysicsIdeal:
         day_of_year = torch.floor(time / 24 * 365)
         hour_of_day = time % 24
         
-        # Calculate solar position
+        # Calculate solar position with seasonal variations
         declination = self.calculate_declination(day_of_year)
         hour_angle = self.calculate_hour_angle(hour_of_day)
         
@@ -129,26 +212,44 @@ class SolarPhysicsIdeal:
         cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)
         cos_zenith = torch.clamp(cos_zenith, min=0.0)
         
-        # Calculate irradiance
+        # Calculate irradiance with seasonal effects
         air_mass = self.calculate_air_mass(cos_zenith)
-        transmission = self.calculate_atmospheric_transmission(air_mass)
-        irradiance = self.solar_constant * cos_zenith * transmission
+        transmission = self.calculate_atmospheric_transmission(air_mass, day_of_year, latitude)
+        
+        # Apply orbital variation to solar constant
+        orbit_factor = 1 + 0.033 * torch.cos(2 * torch.pi * day_of_year / 365)
+        seasonal_solar_constant = self.solar_constant * orbit_factor
+        
+        irradiance = seasonal_solar_constant * cos_zenith * transmission
         
         # Calculate surface orientation factor
         sun_azimuth = torch.rad2deg(hour_angle)
         fsurt = self.calculate_surface_orientation_factor(cos_zenith, slope, sun_azimuth, panel_azimuth)
         
-        # Calculate cell temperature
-        cell_temp = self.calculate_cell_temperature(ambient_temp, irradiance)
+        # Calculate cell temperature with seasonal variations
+        cell_temp = self.calculate_cell_temperature(ambient_temp, irradiance, day_of_year, latitude)
         
-        # Calculate temperature correction factor
-        temp_correction = 1 + self.temp_coefficient * (cell_temp - self.ref_temperature)
+        # Calculate temperature coefficient with seasonal adjustment
+        # Temperature coefficient becomes more negative at higher temperatures
+        temp_diff = cell_temp - self.ref_temperature
+        adjusted_temp_coef = self.temp_coefficient * (1 - 0.0005 * temp_diff)  # Slight adjustment for temperature dependence
         
-        # Calculate total efficiency with temperature correction
-        # η = ηref * fsurt * [1 + β * (Tc - Tref)]
-        total_efficiency = ref_efficiency * fsurt * temp_correction
+        # Calculate temperature correction factor with seasonal adjustment
+        temp_correction = 1 + adjusted_temp_coef * temp_diff
         
-        # Apply daylight mask
+        # Calculate seasonal efficiency adjustment
+        # Efficiency typically slightly better in cooler seasons
+        abs_lat = abs(float(latitude))
+        phase_shift = 0 if latitude >= 0 else 182.5
+        season_factor = torch.cos(2 * torch.pi * ((day_of_year + phase_shift) / 365))
+        lat_scale = (abs_lat / 90) ** 0.5
+        seasonal_efficiency_adj = 1 + 0.01 * season_factor * lat_scale  # ±1% seasonal variation
+        
+        # Calculate total efficiency with all corrections
+        # η = ηref * fsurt * [1 + β * (Tc - Tref)] * seasonal_adj
+        total_efficiency = ref_efficiency * fsurt * temp_correction * seasonal_efficiency_adj
+        
+        # Apply daylight mask with seasonal sunrise/sunset times
         sunrise, sunset, is_polar_day, is_polar_night = self.calculate_sunrise_sunset(latitude, day_of_year)
         is_daytime = is_polar_day | ((hour_of_day >= sunrise) & (hour_of_day <= sunset))
         total_efficiency = torch.where(is_daytime, total_efficiency, torch.zeros_like(total_efficiency))
@@ -156,7 +257,7 @@ class SolarPhysicsIdeal:
         return torch.clamp(total_efficiency, min=0.0)
 
     def calculate_irradiance(self, latitude, time, slope=0, panel_azimuth=0):
-        """Calculate the total solar irradiance at the surface under ideal conditions."""
+        """Calculate the total solar irradiance at the surface under ideal conditions with seasonal variations."""
         latitude = torch.as_tensor(latitude, dtype=torch.float32)
         time = torch.as_tensor(time, dtype=torch.float32)
         slope = torch.as_tensor(slope, dtype=torch.float32)
@@ -165,6 +266,7 @@ class SolarPhysicsIdeal:
         day_of_year = torch.floor(time / 24 * 365)
         hour_of_day = time % 24
         
+        # Calculate solar position with seasonal effects
         sunrise, sunset, is_polar_day, is_polar_night = self.calculate_sunrise_sunset(latitude, day_of_year)
         is_daytime = is_polar_day | ((hour_of_day >= sunrise) & (hour_of_day <= sunset))
         
@@ -173,14 +275,23 @@ class SolarPhysicsIdeal:
         cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)
         cos_zenith = torch.clamp(cos_zenith, min=0.0)
         
+        # Enhanced air mass calculation with seasonal adjustments
         air_mass = self.calculate_air_mass(cos_zenith)
-        transmission = self.calculate_atmospheric_transmission(air_mass)
         
+        # Calculate atmospheric transmission with seasonal variations
+        transmission = self.calculate_atmospheric_transmission(air_mass, day_of_year, latitude)
+        
+        # Calculate surface orientation with seasonal optimization
         surface_orientation = self.calculate_surface_orientation_factor(
             cos_zenith, slope, hour_angle, panel_azimuth
         )
         
-        irradiance = self.solar_constant * transmission * surface_orientation
+        # Apply seasonal variations to final irradiance calculation
+        # Earth's orbit eccentricity effect on solar constant
+        orbit_factor = 1 + 0.033 * torch.cos(2 * torch.pi * day_of_year / 365)
+        seasonal_solar_constant = self.solar_constant * orbit_factor
+        
+        irradiance = seasonal_solar_constant * transmission * surface_orientation
         irradiance = torch.where(is_daytime, irradiance, torch.zeros_like(irradiance))
         
         return torch.clamp(irradiance, min=0.0)

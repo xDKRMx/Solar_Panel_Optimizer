@@ -4,7 +4,6 @@ import torch
 import plotly.graph_objects as go
 import folium
 from streamlit_folium import st_folium
-import datetime
 from solar_pinn_ideal import SolarPINN
 from physics_validator import SolarPhysicsIdeal
 from visualize_results import create_surface_plot, load_model
@@ -13,25 +12,8 @@ def main():
     st.title("Solar Panel Placement Optimizer")
     st.write("Physics-Informed Neural Network for Optimal Solar Panel Placement")
     
-def time_to_decimal_hours(t):
-    """Convert datetime.time to decimal hours."""
-    return t.hour + t.minute/60
-
-def decimal_hours_to_time(hours):
-    """Convert decimal hours to datetime.time."""
-    hour = int(hours)
-    minute = int((hours - hour) * 60)
-    return datetime.time(hour, minute)
-
-def update_param(param_name):
-    if param_name == 'hour':
-        if 'hour_slider' in st.session_state:
-            time_value = st.session_state['hour_slider']
-            decimal_hours = time_to_decimal_hours(time_value)
-            st.session_state['hour'] = decimal_hours
-            st.session_state['hour_input'] = time_value
-    else:
-        if f'{param_name}_slider' in st.session_state:
+    def update_param(param_name):
+        if f'{param_name}_slider' in st.session_state and f'{param_name}_input' in st.session_state:
             value = st.session_state[f'{param_name}_slider']
             st.session_state[f'{param_name}_input'] = value
             st.session_state[param_name] = value
@@ -127,27 +109,23 @@ def update_param(param_name):
     # Hour of Day input with slider and number input
     hour_col1, hour_col2 = st.sidebar.columns([3, 1])
     with hour_col1:
-        time_value = st.slider(
-            "Hour of Day",
-            min_value=datetime.time(0, 0),
-            max_value=datetime.time(23, 59),
-            value=decimal_hours_to_time(st.session_state.get('hour', 12.0)),
+        hour = st.slider(
+            "Hour of Day", 0.0, 24.0,
+            value=st.session_state.get('hour', 12.0),
             key='hour_slider',
-            format="HH:mm",
+            step=0.1,
             on_change=lambda: update_param('hour')
         )
     with hour_col2:
         st.write("")
-        time_input = st.time_input(
-            "Hour of Day Value",
-            value=decimal_hours_to_time(st.session_state.get('hour', 12.0)),
+        hour = st.number_input(
+            "Hour of Day Value", 0.0, 24.0,
+            value=st.session_state.get('hour', 12.0),
             key='hour_input',
+            step=0.1,
             label_visibility="collapsed",
             on_change=lambda: update_param('hour')
         )
-        
-    # Convert time input to decimal hours for calculations
-    hour = time_to_decimal_hours(time_input)
     
     # Update session state when values change
     if latitude != st.session_state.get('latitude'):

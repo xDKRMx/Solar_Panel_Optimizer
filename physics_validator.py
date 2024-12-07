@@ -176,8 +176,17 @@ class SolarPhysicsIdeal:
         adj_ambient_temp = self.calculate_seasonal_ambient_temp(ambient_temp, day_of_year, latitude)
         adj_noct = self.calculate_seasonal_noct(day_of_year, latitude)
         
-        # Calculate cell temperature with seasonal adjustments
-        return adj_ambient_temp + (irradiance / 800) * (adj_noct - 20)
+        # Enhanced temperature calculation considering irradiance and wind effects
+        # Standard Test Conditions (STC) irradiance is 1000 W/m²
+        irradiance_factor = irradiance / 1000
+        
+        # Calculate cell temperature using improved NOCT method
+        # Temperature rise above ambient = (NOCT - 20°C) * (Irradiance/800) * (1 - η_thermal)
+        # η_thermal represents thermal losses (approximately 0.9)
+        thermal_efficiency = 0.9
+        temperature_rise = (adj_noct - 20) * (irradiance / 800) * (1 - thermal_efficiency)
+        
+        return adj_ambient_temp + temperature_rise
 
     def calculate_efficiency(self, latitude, time, slope=0, panel_azimuth=0, ref_efficiency=0.15, ambient_temp=25):
         """Calculate temperature-corrected solar panel efficiency with enhanced seasonal effects.
@@ -247,9 +256,16 @@ class SolarPhysicsIdeal:
         lat_scale = (abs_lat / 90) ** 0.5
         seasonal_efficiency_adj = 1 + 0.01 * season_factor * lat_scale  # ±1% seasonal variation
         
-        # Calculate total efficiency with all corrections
-        # η = ηref * fsurt * [1 + β * (Tc - Tref)] * seasonal_adj
-        total_efficiency = ref_efficiency * fsurt * temp_correction * seasonal_efficiency_adj
+        # Calculate total efficiency with enhanced temperature correction
+        # η = ηref * fsurt * [1 + β * (Tc - Tref)]
+        # Temperature coefficient becomes more negative at higher temperatures
+        temp_diff = cell_temp - self.ref_temperature
+        # Enhanced temperature coefficient model that varies with temperature
+        beta_temp = self.temp_coefficient * (1 + 0.002 * abs(temp_diff))  # More negative at higher temperature differences
+        temp_correction = 1 + beta_temp * temp_diff
+        
+        # Calculate total efficiency with physics-based corrections
+        total_efficiency = ref_efficiency * fsurt * temp_correction
         
         # Apply daylight mask with seasonal sunrise/sunset times
         sunrise, sunset, is_polar_day, is_polar_night = self.calculate_sunrise_sunset(latitude, day_of_year)

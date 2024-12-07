@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from solar_pinn_ideal import SolarPINN, PINNTrainer
 from physics_validator import SolarPhysicsIdeal
 
-def generate_training_data(n_samples=2000, validation_split=0.2):
+def generate_training_data(n_samples=3000, validation_split=0.2):
     """Generate synthetic training data for ideal clear sky conditions with enhanced sampling."""
     # Increase focused samples for problematic ranges
     n_focused = int(n_samples * 0.8)  # 80% of samples in target range
@@ -12,6 +12,10 @@ def generate_training_data(n_samples=2000, validation_split=0.2):
     
     # Add additional samples around sunrise/sunset periods
     n_transition = int(n_focused * 0.3)  # 30% of focused samples for transition periods
+    
+    # Implement stratified sampling for day_of_year
+    seasons = [(1, 91), (92, 182), (183, 273), (274, 365)]  # Spring, Summer, Fall, Winter
+    samples_per_season = n_samples // 4
     
     # Generate focused samples for -90° to +60° range
     lat_focused = (torch.rand(n_focused) * 150 - 90).requires_grad_()  # -90 to +60 degrees
@@ -82,24 +86,30 @@ def main():
     
     # Enhanced training parameters with optimizations
     n_epochs = 200
-    batch_size = 256  # Increased batch size for better stability
+    batch_size = 512  # Increased batch size for better stability
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')
-    min_delta = 1e-4  # Minimum improvement threshold
-    patience = 25  # Reduced patience with minimum delta threshold
+    min_delta = 1e-5  # Updated minimum improvement threshold
+    patience = 20  # Reduced patience
     patience_counter = 0
     
-    # Optimized learning rate scheduler
-    trainer.optimizer = torch.optim.Adam(model.parameters(), lr=0.002)  # Updated initial learning rate
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        trainer.optimizer, 
-        step_size=40,  # Reduced step size
-        gamma=0.7  # Increased gamma for smoother decay
+    # Learning rate scheduling with warmup
+    initial_lr = 0.001
+    warmup_epochs = 5
+    trainer.optimizer = torch.optim.Adam(model.parameters(), lr=initial_lr)
+    
+    # Use ReduceLROnPlateau scheduler
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        trainer.optimizer,
+        mode='min',
+        factor=0.5,
+        patience=10,
+        verbose=True
     )
     
-    # Updated physics loss weight scheduling
-    initial_physics_weight = 0.1  # Reduced initial weight
-    max_physics_weight = 0.25  # Reduced maximum weight
+    # Enhanced physics loss weight scheduling with cosine annealing
+    initial_physics_weight = 0.05
+    max_physics_weight = 0.3
     physics_weight = initial_physics_weight
     
     print("Starting training...")
@@ -118,8 +128,9 @@ def main():
             x_batch = x_train[batch_indices]
             y_batch = y_train[batch_indices]
             
-            # Update physics weight gradually
-            physics_weight = initial_physics_weight + (max_physics_weight - initial_physics_weight) * (epoch / n_epochs)
+            # Update physics weight using cosine annealing
+            physics_weight = initial_physics_weight + 0.5 * (max_physics_weight - initial_physics_weight) * \
+                           (1 + np.cos(np.pi * epoch / n_epochs))
             
             # Training step with current physics weight and gradient clipping
             loss = trainer.train_step(x_batch, y_batch, physics_weight=physics_weight)

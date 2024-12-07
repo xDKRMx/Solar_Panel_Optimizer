@@ -135,10 +135,10 @@ def main():
             value=st.session_state.get('hour', 12.0),
             key='hour_input',
             step=0.25,
-            format="%02d:%02d",
             label_visibility="collapsed",
             on_change=lambda: update_param('hour')
         )
+        st.write(f"Selected time: {format_time(hour)}")
     
     # Update session state when values change
     if latitude != st.session_state.get('latitude'):

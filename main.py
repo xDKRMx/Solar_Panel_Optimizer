@@ -8,6 +8,16 @@ from solar_pinn_ideal import SolarPINN
 from physics_validator import SolarPhysicsIdeal
 from visualize_results import create_surface_plot, load_model
 
+def decimal_to_hhmm(decimal_hours):
+    """Convert decimal hours to HH:MM format."""
+    hours = int(decimal_hours)
+    minutes = int((decimal_hours - hours) * 60)
+    return f"{hours:02d}:{minutes:02d}"
+
+def hhmm_to_decimal(hhmm):
+    """Convert HH:MM format to decimal hours."""
+    hours, minutes = map(int, hhmm.split(':'))
+    return hours + minutes/60
 def main():
     st.title("Solar Panel Placement Optimizer")
     st.write("Physics-Informed Neural Network for Optimal Solar Panel Placement")
@@ -113,19 +123,28 @@ def main():
             "Hour of Day", 0.0, 24.0,
             value=st.session_state.get('hour', 12.0),
             key='hour_slider',
-            step=0.1,
+            step=1/60,  # One minute steps
+            format=lambda x: decimal_to_hhmm(x),
             on_change=lambda: update_param('hour')
         )
     with hour_col2:
         st.write("")
-        hour = st.number_input(
-            "Hour of Day Value", 0.0, 24.0,
-            value=st.session_state.get('hour', 12.0),
+        current_hour = st.session_state.get('hour', 12.0)
+        hour_str = decimal_to_hhmm(current_hour)
+        hour_input = st.text_input(
+            "Hour of Day Value",
+            value=hour_str,
             key='hour_input',
-            step=0.1,
-            label_visibility="collapsed",
-            on_change=lambda: update_param('hour')
+            label_visibility="collapsed"
         )
+        try:
+            if hour_input != hour_str:  # Only update if changed
+                hour = hhmm_to_decimal(hour_input)
+                if 0 <= hour <= 24:
+                    st.session_state['hour'] = hour
+                    st.session_state['hour_slider'] = hour
+        except ValueError:
+            st.error("Please enter time in HH:MM format")
     
     # Update session state when values change
     if latitude != st.session_state.get('latitude'):

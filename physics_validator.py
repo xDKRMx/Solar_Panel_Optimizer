@@ -9,8 +9,54 @@ class SolarPhysicsIdeal:
 
     def calculate_declination(self, day_of_year):
         """Calculate the solar declination angle (δ) for a given day of the year."""
+        # δ = 23.45° · sin(2π/365 · (n-81))
         declination = 23.45 * torch.sin(2 * torch.pi * (day_of_year - 81) / 365)
         return torch.deg2rad(declination)
+
+    def calculate_sunrise_sunset(self, latitude, day_of_year):
+        """Calculate sunrise and sunset times using accurate equations.
+        
+        Args:
+            latitude: Location latitude in degrees
+            day_of_year: Day of the year (1-365)
+            
+        Returns:
+            tuple: (sunrise time, sunset time) in hours (local solar time)
+        """
+        # Convert latitude to radians
+        lat_rad = torch.deg2rad(latitude)
+        
+        # Calculate declination angle
+        decl_rad = self.calculate_declination(day_of_year)
+        
+        # Calculate hour angle at sunrise/sunset using:
+        # cos(h) = -tan(φ)·tan(δ)
+        cos_hour_angle = -torch.tan(lat_rad) * torch.tan(decl_rad)
+        
+        # Clamp values to handle edge cases (polar days/nights)
+        cos_hour_angle = torch.clamp(cos_hour_angle, -1, 1)
+        
+        # Convert to hour angle in radians
+        hour_angle = torch.arccos(cos_hour_angle)
+        
+        # Convert hour angle to hours
+        # Sunrise = 12 - h/15, Sunset = 12 + h/15
+        hour_offset = torch.rad2deg(hour_angle) / 15
+        
+        sunrise = 12 - hour_offset
+        sunset = 12 + hour_offset
+        
+        # Handle special cases for polar regions
+        is_polar_day = cos_hour_angle < -1  # Sun never sets
+        is_polar_night = cos_hour_angle > 1  # Sun never rises
+        
+        sunrise = torch.where(is_polar_day, torch.zeros_like(sunrise), sunrise)
+        sunset = torch.where(is_polar_day, torch.full_like(sunset, 24), sunset)
+        
+        sunrise = torch.where(is_polar_night, torch.full_like(sunrise, float('inf')), sunrise)
+        sunset = torch.where(is_polar_night, torch.full_like(sunset, float('inf')), sunset)
+        
+        return sunrise, sunset
 
     def calculate_zenith_angle(self, latitude, declination, hour_angle):
         """Calculate the cosine of the solar zenith angle (cos θz)."""
@@ -93,31 +139,35 @@ class SolarPhysicsIdeal:
         
         # Convert day of year from time
         day_of_year = torch.floor(time / 24 * 365)
+        hour_of_day = time % 24
         
-        # Step 1: Calculate solar declination
+        # Get sunrise and sunset times
+        sunrise, sunset = self.calculate_sunrise_sunset(latitude, day_of_year)
+        
+        # Check if current time is during daylight hours
+        is_daytime = (hour_of_day >= sunrise) & (hour_of_day <= sunset)
+        
+        # Calculate solar position and irradiance only during daytime
         declination = self.calculate_declination(day_of_year)
-
-        # Step 2: Calculate the hour angle
-        hour_angle = self.calculate_hour_angle(time % 24)
-
-        # Step 3: Calculate cosine of the solar zenith angle
+        hour_angle = self.calculate_hour_angle(hour_of_day)
         cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)
-        cos_zenith = torch.clamp(cos_zenith, min=0.0)  # Ensure no negative values (nighttime)
-
-        # Step 4: Calculate air mass
+        cos_zenith = torch.clamp(cos_zenith, min=0.0)  # Ensure no negative values
+        
+        # Calculate atmospheric effects
         air_mass = self.calculate_air_mass(cos_zenith)
-
-        # Step 5: Calculate atmospheric transmission
         transmission = self.calculate_atmospheric_transmission(air_mass)
-
-        # Step 6: Calculate surface orientation factor
+        
+        # Calculate surface orientation
         surface_orientation = self.calculate_surface_orientation_factor(
             cos_zenith, slope, hour_angle, panel_azimuth
         )
-
-        # Step 7: Calculate irradiance
+        
+        # Calculate base irradiance
         irradiance = self.solar_constant * transmission * surface_orientation
-
+        
+        # Apply daylight mask
+        irradiance = torch.where(is_daytime, irradiance, torch.zeros_like(irradiance))
+        
         return torch.clamp(irradiance, min=0.0)  # Ensure non-negative irradiance
 
     def calculate_efficiency(self, latitude, time, slope=0, panel_azimuth=0, ref_efficiency=0.15):

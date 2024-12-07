@@ -13,28 +13,9 @@ class SolarPhysicsIdeal:
         self.noct = 45.0  # Nominal Operating Cell Temperature, °C
 
     def calculate_declination(self, day_of_year):
-        """Calculate the solar declination angle (δ) for a given day of the year using Spencer's formula.
-        
-        This is a more accurate formula that accounts for Earth's elliptical orbit and orbital mechanics.
-        
-        Args:
-            day_of_year: Day of year (1-365)
-            
-        Returns:
-            Solar declination angle in radians
-        """
-        # Convert day of year to radians
-        day_angle = 2 * torch.pi * (day_of_year - 1) / 365
-        
-        # Calculate declination using Spencer's formula
-        declination = (0.006918 - 0.399912 * torch.cos(day_angle) 
-                      + 0.070257 * torch.sin(day_angle)
-                      - 0.006758 * torch.cos(2 * day_angle) 
-                      + 0.000907 * torch.sin(2 * day_angle)
-                      - 0.002697 * torch.cos(3 * day_angle) 
-                      + 0.001480 * torch.sin(3 * day_angle))
-        
-        return declination  # Already in radians
+        """Calculate the solar declination angle (δ) for a given day of the year."""
+        declination = 23.45 * torch.sin(2 * torch.pi * (day_of_year - 81) / 365)
+        return torch.deg2rad(declination)
 
     def calculate_sunrise_sunset(self, latitude, day_of_year):
         """Calculate sunrise and sunset times using accurate equations."""
@@ -80,36 +61,12 @@ class SolarPhysicsIdeal:
         air_mass = basic_am / high_lat_correction
         return torch.clamp(air_mass, min=1.0)
 
-    def calculate_atmospheric_transmission(self, air_mass, day_of_year):
-        """Calculate the atmospheric transmission factor (T) with seasonal variations.
-        
-        Args:
-            air_mass: Relative air mass
-            day_of_year: Day of year (1-365) for seasonal adjustments
-            
-        Returns:
-            Atmospheric transmission factor
-        """
-        # Base transmission with air mass
+    def calculate_atmospheric_transmission(self, air_mass):
+        """Calculate the atmospheric transmission factor (T)."""
         base_transmission = torch.exp(-self.extinction_coefficient * air_mass)
-        
-        # Seasonal variation in Rayleigh scattering (more in winter due to denser atmosphere)
-        day_angle = 2 * torch.pi * (day_of_year - 1) / 365
-        seasonal_factor = 1 + 0.033 * torch.cos(day_angle)  # Earth-Sun distance variation
-        
-        # Component transmissions with seasonal adjustments
-        rayleigh = torch.exp(-0.0903 * air_mass ** 0.84 * seasonal_factor)
-        
-        # Aerosol variation (typically higher in summer)
-        summer_peak = torch.sin(day_angle) ** 2  # Maximum effect in summer
-        aerosol_factor = 1 + 0.2 * summer_peak
-        aerosol = torch.exp(-0.08 * air_mass ** 0.95 * aerosol_factor)
-        
-        # Ozone variation (higher in spring)
-        spring_peak = torch.sin(day_angle + torch.pi/2) ** 2  # Maximum in spring
-        ozone_factor = 1 + 0.1 * spring_peak
-        ozone = torch.exp(-0.0042 * air_mass ** 0.95 * ozone_factor)
-        
+        rayleigh = torch.exp(-0.0903 * air_mass ** 0.84)
+        aerosol = torch.exp(-0.08 * air_mass ** 0.95)
+        ozone = torch.exp(-0.0042 * air_mass ** 0.95)
         return base_transmission * rayleigh * aerosol * ozone
 
     def calculate_surface_orientation_factor(self, zenith_angle, slope, sun_azimuth, panel_azimuth):
@@ -172,14 +129,10 @@ class SolarPhysicsIdeal:
         cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)
         cos_zenith = torch.clamp(cos_zenith, min=0.0)
         
-        # Calculate irradiance with seasonal atmospheric effects
+        # Calculate irradiance
         air_mass = self.calculate_air_mass(cos_zenith)
-        transmission = self.calculate_atmospheric_transmission(air_mass, day_of_year)
-        
-        # Apply seasonal correction to solar constant (varies with Earth-Sun distance)
-        day_angle = 2 * torch.pi * (day_of_year - 1) / 365
-        seasonal_solar_constant = self.solar_constant * (1 + 0.033 * torch.cos(day_angle))
-        irradiance = seasonal_solar_constant * cos_zenith * transmission
+        transmission = self.calculate_atmospheric_transmission(air_mass)
+        irradiance = self.solar_constant * cos_zenith * transmission
         
         # Calculate surface orientation factor
         sun_azimuth = torch.rad2deg(hour_angle)
@@ -221,17 +174,13 @@ class SolarPhysicsIdeal:
         cos_zenith = torch.clamp(cos_zenith, min=0.0)
         
         air_mass = self.calculate_air_mass(cos_zenith)
-        transmission = self.calculate_atmospheric_transmission(air_mass, day_of_year)
-        
-        # Apply seasonal correction to solar constant
-        day_angle = 2 * torch.pi * (day_of_year - 1) / 365
-        seasonal_solar_constant = self.solar_constant * (1 + 0.033 * torch.cos(day_angle))
+        transmission = self.calculate_atmospheric_transmission(air_mass)
         
         surface_orientation = self.calculate_surface_orientation_factor(
             cos_zenith, slope, hour_angle, panel_azimuth
         )
         
-        irradiance = seasonal_solar_constant * transmission * surface_orientation
+        irradiance = self.solar_constant * transmission * surface_orientation
         irradiance = torch.where(is_daytime, irradiance, torch.zeros_like(irradiance))
         
         return torch.clamp(irradiance, min=0.0)

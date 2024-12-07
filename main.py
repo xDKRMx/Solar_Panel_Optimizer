@@ -1,10 +1,12 @@
 import streamlit as st
+import numpy as np
+import torch
+import plotly.graph_objects as go
 import folium
 from streamlit_folium import st_folium
-import torch
 from solar_pinn_ideal import SolarPINN
 from physics_validator import SolarPhysicsIdeal
-from visualize_results import load_model, create_surface_plot
+from visualize_results import create_surface_plot, load_model
 
 
 def format_time(decimal_hour):
@@ -65,98 +67,104 @@ def main():
     lat_col1, lat_col2 = st.sidebar.columns([3, 1])
     with lat_col1:
         latitude = st.slider("Latitude",
-                          -90.0,
-                          90.0,
-                          value=st.session_state.get('latitude', 45.0),
-                          key='latitude_slider',
-                          on_change=lambda: update_param('latitude'))
+                             -90.0,
+                             90.0,
+                             value=st.session_state.get('latitude', 45.0),
+                             key='latitude_slider',
+                             on_change=lambda: update_param('latitude'))
     with lat_col2:
         st.write("")
         latitude = st.number_input("Latitude Value",
-                                -90.0,
-                                90.0,
-                                value=st.session_state.get('latitude', 45.0),
-                                key='latitude_input',
-                                label_visibility="collapsed",
-                                on_change=lambda: update_param('latitude'))
+                                   -90.0,
+                                   90.0,
+                                   value=st.session_state.get(
+                                       'latitude', 45.0),
+                                   key='latitude_input',
+                                   label_visibility="collapsed",
+                                   on_change=lambda: update_param('latitude'))
 
     # Longitude input with slider and number input
     lon_col1, lon_col2 = st.sidebar.columns([3, 1])
     with lon_col1:
         longitude = st.slider("Longitude",
-                           -180.0,
-                           180.0,
-                           value=st.session_state.get('longitude', 0.0),
-                           key='longitude_slider',
-                           on_change=lambda: update_param('longitude'))
+                              -180.0,
+                              180.0,
+                              value=st.session_state.get('longitude', 0.0),
+                              key='longitude_slider',
+                              on_change=lambda: update_param('longitude'))
     with lon_col2:
         st.write("")
-        longitude = st.number_input("Longitude Value",
-                                 -180.0,
-                                 180.0,
-                                 value=st.session_state.get('longitude', 0.0),
-                                 key='longitude_input',
-                                 label_visibility="collapsed",
-                                 on_change=lambda: update_param('longitude'))
+        longitude = st.number_input(
+            "Longitude Value",
+            -180.0,
+            180.0,
+            value=st.session_state.get('longitude', 0.0),
+            key='longitude_input',
+            label_visibility="collapsed",
+            on_change=lambda: update_param('longitude'))
 
     # Day of Year input with slider and number input
     day_col1, day_col2 = st.sidebar.columns([3, 1])
     with day_col1:
         day_of_year = st.slider("Day of Year",
-                              1,
-                              365,
-                              value=st.session_state.get('day_of_year', 182),
-                              key='day_of_year_slider',
-                              on_change=lambda: update_param('day_of_year'))
+                                1,
+                                365,
+                                value=st.session_state.get('day_of_year', 182),
+                                key='day_of_year_slider',
+                                on_change=lambda: update_param('day_of_year'))
     with day_col2:
         st.write("")
-        day_of_year = st.number_input("Day of Year Value",
-                                    1,
-                                    365,
-                                    value=st.session_state.get('day_of_year', 182),
-                                    key='day_of_year_input',
-                                    label_visibility="collapsed",
-                                    on_change=lambda: update_param('day_of_year'))
+        day_of_year = st.number_input(
+            "Day of Year Value",
+            1,
+            365,
+            value=st.session_state.get('day_of_year', 182),
+            key='day_of_year_input',
+            label_visibility="collapsed",
+            on_change=lambda: update_param('day_of_year'))
 
     # Hour of Day input with slider and number input
+    def generate_time_range():
+        """Generate a list of time values in HH:MM format from 00:00 to 23:59."""
+        times = []
+        for hour in range(24):
+            for minute in range(0, 60, 1):  # Step by 1 minute
+                times.append(f"{hour:02}:{minute:02}")
+        return times
+
+    def parse_time(selected_time):
+        """Parse the selected time string into hours and minutes."""
+        hour, minute = map(int, selected_time.split(":"))
+        return hour + minute / 60
+
+    # Generate time options for the slider
+    time_range = generate_time_range()
+
+    # Sidebar layout
     hour_col1, hour_col2 = st.sidebar.columns([3, 1])
 
-    def enforce_time_constraint(decimal_hour):
-        """Ensure the fractional minutes part does not exceed 59."""
-        hours = int(decimal_hour)
-        minutes = int((decimal_hour % 1) * 60)
-        if minutes > 59:
-            minutes = 59
-        return hours + (minutes / 60)
-
     with hour_col1:
-        raw_hour = st.slider(
+        # Slider with formatted time options
+        selected_time = st.select_slider(
             "Hour of Day",
-            min_value=0.0,
-            max_value=23.983,  # 23:59
-            value=st.session_state.get('hour', 12.0),
-            step=0.016667,  # 1 minute increment (1/60)
-            key='hour_slider',
-            on_change=lambda: update_param('hour')
+            options=time_range,  # Use the generated time range
+            value="12:00",  # Default to noon
         )
-        adjusted_hour = enforce_time_constraint(raw_hour)
-        st.session_state['hour'] = adjusted_hour
-        st.write(f"Selected time: {format_time(adjusted_hour)}")
+        st.session_state['hour'] = parse_time(
+            selected_time)  # Convert to decimal hour
 
     with hour_col2:
-        st.write("")
-        raw_hour = st.number_input(
-            "Hour Value",
-            min_value=0.0,
-            max_value=23.983,  # 23:59
-            value=st.session_state.get('hour', 12.0),
-            step=0.016667,  # 1 minute increment (1/60)
-            key='hour_input',
-            label_visibility="collapsed",
-            on_change=lambda: update_param('hour')
+        # Allow user to type directly
+        selected_time_input = st.text_input(
+            "",
+            value=selected_time,  # Default matches slider
         )
-        adjusted_hour = enforce_time_constraint(raw_hour)
-        st.session_state['hour'] = adjusted_hour
+        # Validate and update
+        if selected_time_input in time_range:
+            selected_time = selected_time_input
+            st.session_state['hour'] = parse_time(selected_time)
+        else:
+            st.error("Invalid time format. Please use HH:MM.")
 
     # Update session state when values change
     if latitude != st.session_state.get('latitude'):
@@ -168,8 +176,8 @@ def main():
     if st.session_state.show_map:
         st.subheader("Select Location on Map")
         m = folium.Map(location=[latitude, longitude],
-                      zoom_start=3,
-                      tiles="OpenStreetMap")
+                       zoom_start=3,
+                       tiles="OpenStreetMap")
 
         folium.Marker(
             [
@@ -193,10 +201,11 @@ def main():
     # Calculate predictions and metrics
     try:
         with torch.no_grad():
+            hour = st.session_state['hour']
             current_input = torch.tensor([[
                 latitude / 90,
                 longitude / 180,
-                adjusted_hour / 24,
+                hour / 24,
                 0 / 180,  # Default slope
                 180 / 360  # Default aspect (south-facing)
             ]]).float()
@@ -205,7 +214,7 @@ def main():
 
         # Calculate physics-based irradiance and efficiency
         lat_tensor = torch.tensor([latitude], dtype=torch.float32)
-        hour_tensor = torch.tensor([adjusted_hour], dtype=torch.float32)
+        hour_tensor = torch.tensor([hour], dtype=torch.float32)
         physics_irradiance = physics_model.calculate_irradiance(
             latitude=lat_tensor, time=hour_tensor).item()
 
@@ -231,7 +240,7 @@ def main():
         accuracy_ratio = min(predicted_irradiance, physics_irradiance) / max(
             predicted_irradiance, physics_irradiance) * 100
         relative_error = abs(predicted_irradiance -
-                          physics_irradiance) / physics_irradiance * 100
+                             physics_irradiance) / physics_irradiance * 100
 
         # Determine color based on accuracy ratio
         if accuracy_ratio > 85:
@@ -281,7 +290,7 @@ def main():
                     try:
                         fig, metrics = create_surface_plot(
                             model, st.session_state.get('latitude', latitude),
-                            st.session_state.get('longitude', longitude), adjusted_hour)
+                            st.session_state.get('longitude', longitude), hour)
                         st.plotly_chart(fig, use_container_width=True)
 
                         st.markdown(f'''

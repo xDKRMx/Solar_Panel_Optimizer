@@ -35,9 +35,18 @@ def create_surface_plot(model, latitude, longitude, time, resolution=30):
         # Calculate efficiency for each point using physics-based model
         for i in range(resolution):
             for j in range(resolution):
+                # Calculate irradiance first
+                irradiance = physics_model.calculate_irradiance(
+                    latitude=latitude,
+                    time=time,
+                    slope=slopes[i],
+                    panel_azimuth=aspects[j]
+                )
+                # Calculate efficiency using the predicted irradiance
                 efficiency = physics_model.calculate_efficiency(
                     latitude=latitude,
                     time=time,
+                    predicted_irradiance=irradiance,
                     slope=slopes[i],
                     panel_azimuth=aspects[j]
                 )

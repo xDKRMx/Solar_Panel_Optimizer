@@ -221,13 +221,17 @@ class SolarPhysicsIdeal:
         cos_zenith = torch.clamp(cos_zenith, min=0.0)
         
         air_mass = self.calculate_air_mass(cos_zenith)
-        transmission = self.calculate_atmospheric_transmission(air_mass)
+        transmission = self.calculate_atmospheric_transmission(air_mass, day_of_year)
+        
+        # Apply seasonal correction to solar constant
+        day_angle = 2 * torch.pi * (day_of_year - 1) / 365
+        seasonal_solar_constant = self.solar_constant * (1 + 0.033 * torch.cos(day_angle))
         
         surface_orientation = self.calculate_surface_orientation_factor(
             cos_zenith, slope, hour_angle, panel_azimuth
         )
         
-        irradiance = self.solar_constant * transmission * surface_orientation
+        irradiance = seasonal_solar_constant * transmission * surface_orientation
         irradiance = torch.where(is_daytime, irradiance, torch.zeros_like(irradiance))
         
         return torch.clamp(irradiance, min=0.0)

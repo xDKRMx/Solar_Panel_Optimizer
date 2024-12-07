@@ -61,7 +61,7 @@ def main():
     with lat_col2:
         st.write("")
         latitude = st.number_input(
-            "", -90.0, 90.0,
+            "Latitude Value", -90.0, 90.0,
             value=st.session_state.get('latitude', 45.0),
             key='latitude_input',
             label_visibility="collapsed",
@@ -80,7 +80,7 @@ def main():
     with lon_col2:
         st.write("")
         longitude = st.number_input(
-            "", -180.0, 180.0,
+            "Longitude Value", -180.0, 180.0,
             value=st.session_state.get('longitude', 0.0),
             key='longitude_input',
             label_visibility="collapsed",
@@ -99,7 +99,7 @@ def main():
     with day_col2:
         st.write("")
         day_of_year = st.number_input(
-            "", 1, 365,
+            "Day of Year Value", 1, 365,
             value=st.session_state.get('day_of_year', 182),
             key='day_of_year_input',
             label_visibility="collapsed",
@@ -119,7 +119,7 @@ def main():
     with hour_col2:
         st.write("")
         hour = st.number_input(
-            "", 0.0, 24.0,
+            "Hour of Day Value", 0.0, 24.0,
             value=st.session_state.get('hour', 12.0),
             key='hour_input',
             step=0.1,

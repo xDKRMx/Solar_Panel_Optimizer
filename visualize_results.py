@@ -42,9 +42,7 @@ def create_surface_plot(model, latitude, longitude, time, resolution=30):
                     time.expand(1),
                     slopes[i].expand(1),
                     aspects[j].expand(1),
-                    torch.ones(1),  # atmospheric transmission
-                    torch.zeros(1), # cloud cover
-                    torch.ones(1)   # wavelength
+
                 ], dim=1)
                 predicted_irradiance = model(input_tensor).squeeze() * physics_model.solar_constant
 

@@ -32,21 +32,35 @@ def create_surface_plot(model, latitude, longitude, time, resolution=30):
         # Initialize results tensor
         efficiency_map = torch.zeros((resolution, resolution), dtype=torch.float32)
         
-        # Calculate efficiency for each point using physics-based model
+        # Default atmospheric conditions
+        atm_condition = torch.ones(1, dtype=torch.float32) * 0.8  # Clear sky condition
+        cloud_cover = torch.zeros(1, dtype=torch.float32)  # No clouds
+        wavelength = torch.ones(1, dtype=torch.float32) * 0.5  # Default wavelength (μm)
+        
+        # Calculate efficiency for each point using PINN model
         for i in range(resolution):
             for j in range(resolution):
-                # Calculate irradiance first
-                irradiance = physics_model.calculate_irradiance(
-                    latitude=latitude,
-                    time=time,
-                    slope=slopes[i],
-                    panel_azimuth=aspects[j]
-                )
+                # Prepare normalized input tensor for PINN
+                input_tensor = torch.stack([
+                    latitude / 90.0,  # Normalize latitude to [-1, 1]
+                    longitude / 180.0,  # Normalize longitude to [-1, 1]
+                    time / 24.0,  # Normalize time to [0, 1]
+                    slopes[i] / 180.0,  # Normalize slope to [0, 1]
+                    aspects[j] / 360.0,  # Normalize aspect to [0, 1]
+                    atm_condition,  # Already normalized
+                    cloud_cover,  # Already normalized
+                    wavelength  # Already normalized
+                ]).reshape(1, -1)
+                
+                # Get irradiance prediction from PINN model
+                with torch.no_grad():
+                    predicted_irradiance = model(input_tensor) * physics_model.solar_constant
+                
                 # Calculate efficiency using the predicted irradiance
                 efficiency = physics_model.calculate_efficiency(
                     latitude=latitude,
                     time=time,
-                    predicted_irradiance=irradiance,
+                    predicted_irradiance=predicted_irradiance.item(),
                     slope=slopes[i],
                     panel_azimuth=aspects[j]
                 )

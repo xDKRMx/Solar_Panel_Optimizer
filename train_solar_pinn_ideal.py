@@ -6,9 +6,12 @@ from physics_validator import SolarPhysicsIdeal
 
 def generate_training_data(n_samples=2000, validation_split=0.2):
     """Generate synthetic training data for ideal clear sky conditions with enhanced sampling."""
-    # Generate more samples for problematic latitude range (-90° to +60°)
-    n_focused = int(n_samples * 0.7)  # 70% of samples in target range
+    # Increase focused samples for problematic ranges
+    n_focused = int(n_samples * 0.8)  # 80% of samples in target range
     n_regular = n_samples - n_focused
+    
+    # Add additional samples around sunrise/sunset periods
+    n_transition = int(n_focused * 0.3)  # 30% of focused samples for transition periods
     
     # Generate focused samples for -90° to +60° range
     lat_focused = (torch.rand(n_focused) * 150 - 90).requires_grad_()  # -90 to +60 degrees
@@ -77,24 +80,26 @@ def main():
     # Generate training and validation data
     x_train, y_train, x_val, y_val = generate_training_data()
     
-    # Enhanced training parameters
-    n_epochs = 200  # Modified number of epochs as requested
-    batch_size = 128  # Larger batch size for stable training
+    # Enhanced training parameters with optimizations
+    n_epochs = 200
+    batch_size = 256  # Increased batch size for better stability
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')
-    patience = 30  # Increased patience for better convergence
+    min_delta = 1e-4  # Minimum improvement threshold
+    patience = 25  # Reduced patience with minimum delta threshold
     patience_counter = 0
     
-    # Learning rate scheduler
+    # Optimized learning rate scheduler
+    trainer.optimizer = torch.optim.Adam(model.parameters(), lr=0.002)  # Updated initial learning rate
     scheduler = torch.optim.lr_scheduler.StepLR(
         trainer.optimizer, 
-        step_size=50,
-        gamma=0.5
+        step_size=40,  # Reduced step size
+        gamma=0.7  # Increased gamma for smoother decay
     )
     
-    # Physics loss weight scheduling
-    initial_physics_weight = 0.15
-    max_physics_weight = 0.3
+    # Updated physics loss weight scheduling
+    initial_physics_weight = 0.1  # Reduced initial weight
+    max_physics_weight = 0.25  # Reduced maximum weight
     physics_weight = initial_physics_weight
     
     print("Starting training...")
@@ -116,8 +121,9 @@ def main():
             # Update physics weight gradually
             physics_weight = initial_physics_weight + (max_physics_weight - initial_physics_weight) * (epoch / n_epochs)
             
-            # Training step with current physics weight
+            # Training step with current physics weight and gradient clipping
             loss = trainer.train_step(x_batch, y_batch, physics_weight=physics_weight)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # Add gradient clipping
             epoch_loss += loss
             
         # Step the learning rate scheduler
@@ -141,7 +147,8 @@ def main():
                 val_metrics = {'mae': float('inf'), 'rmse': float('inf'), 'r2': -float('inf')}
         
         # Early stopping check
-        if val_loss < best_val_loss:
+        # Early stopping with minimum delta threshold
+        if val_loss < best_val_loss - min_delta:
             best_val_loss = val_loss
             patience_counter = 0
             # Save best model

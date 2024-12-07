@@ -119,23 +119,20 @@ class SolarPINN(nn.Module):
         return sunrise, sunset
 
     def forward(self, x):
-        """Forward pass with physics constraints using exact formulations."""
+        """Forward pass with physics constraints."""
         # Extract individual components
-        latitude = x[:, 0]  # Latitude in degrees
-        time = x[:, 1]      # Time in hours
+        latitude = x[:, 0]
+        time = x[:, 1]
         day_of_year = x[:, 2]
         slope = x[:, 3]
         
-        # Calculate solar declination using exact formula
-        # δ = 23.45° · sin(2π/365 · (n-81))
-        declination = self.calculate_declination(day_of_year)
-        
-        # Calculate hour angle
-        hour_angle = self.calculate_hour_angle(time)  # In radians
-        zenith_angle = self.calculate_zenith_angle(latitude, declination, hour_angle)
-        
         # Neural network prediction
         prediction = self.physics_net(x)
+        
+        # Calculate physical parameters
+        declination = self.calculate_declination(day_of_year)
+        hour_angle = self.calculate_hour_angle(time)
+        zenith_angle = self.calculate_zenith_angle(latitude, declination, hour_angle)
         
         # Apply physical constraints
         air_mass = self.calculate_air_mass(zenith_angle)
@@ -147,15 +144,10 @@ class SolarPINN(nn.Module):
         # Apply physical constraints
         constrained_prediction = prediction * atmospheric_transmission * surface_factor
         
-        # Calculate sunrise and sunset times using exact formulations
+        # Apply day/night constraint
         sunrise, sunset = self.calculate_sunrise_sunset(latitude, declination)
-        
-        # Apply day/night constraint using exact calculations
-        # Handle special cases (polar day/night)
-        is_daytime = (time >= sunrise) & (time <= sunset)
-        
-        # Set prediction to zero during nighttime
-        final_prediction = torch.where(is_daytime.reshape(-1, 1), 
+        day_mask = (time >= sunrise) & (time <= sunset)
+        final_prediction = torch.where(day_mask.reshape(-1, 1), 
                                      constrained_prediction, 
                                      torch.zeros_like(constrained_prediction))
         

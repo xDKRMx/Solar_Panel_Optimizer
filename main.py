@@ -8,16 +8,6 @@ from solar_pinn_ideal import SolarPINN
 from physics_validator import SolarPhysicsIdeal
 from visualize_results import create_surface_plot, load_model
 
-def decimal_to_hhmm(decimal_hours):
-    """Convert decimal hours to HH:MM format."""
-    hours = int(decimal_hours)
-    minutes = int((decimal_hours - hours) * 60)
-    return f"{hours:02d}:{minutes:02d}"
-
-def hhmm_to_decimal(hhmm):
-    """Convert HH:MM format to decimal hours."""
-    hours, minutes = map(int, hhmm.split(':'))
-    return hours + minutes/60
 def main():
     st.title("Solar Panel Placement Optimizer")
     st.write("Physics-Informed Neural Network for Optimal Solar Panel Placement")
@@ -118,45 +108,24 @@ def main():
     
     # Hour of Day input with slider and number input
     hour_col1, hour_col2 = st.sidebar.columns([3, 1])
-    
-    # Convert hour to total minutes for the slider
-    total_minutes = int(st.session_state.get('hour', 12.0) * 60)
-
-    # Create slider using minutes (0-1439 = 23h59m)
     with hour_col1:
-        total_minutes = st.slider(
-            "Hour of Day",
-            min_value=0,
-            max_value=1439,
-            value=total_minutes,
-            step=1,
+        hour = st.slider(
+            "Hour of Day", 0.0, 24.0,
+            value=st.session_state.get('hour', 12.0),
             key='hour_slider',
-            format=lambda x: f"{x//60:02d}:{x%60:02d}",  # Format as HH:MM
+            step=0.1,
             on_change=lambda: update_param('hour')
         )
-        # Convert minutes back to decimal hours for internal use
-        hour = total_minutes / 60.0
-        st.session_state['hour'] = hour
-
-    # Update text input to handle HH:MM format
     with hour_col2:
         st.write("")
-        hour_str = f"{int(hour):02d}:{int((hour % 1) * 60):02d}"
-        hour_input = st.text_input(
-            "Hour of Day Value",
-            value=hour_str,
+        hour = st.number_input(
+            "Hour of Day Value", 0.0, 24.0,
+            value=st.session_state.get('hour', 12.0),
             key='hour_input',
-            label_visibility="collapsed"
+            step=0.1,
+            label_visibility="collapsed",
+            on_change=lambda: update_param('hour')
         )
-        try:
-            if hour_input != hour_str:  # Only update if changed
-                h, m = map(int, hour_input.split(':'))
-                if 0 <= h <= 23 and 0 <= m <= 59:
-                    new_hour = h + m/60
-                    st.session_state['hour'] = new_hour
-                    st.session_state['hour_slider'] = int(new_hour * 60)
-        except ValueError:
-            st.error("Please enter time in HH:MM format")
     
     # Update session state when values change
     if latitude != st.session_state.get('latitude'):

@@ -13,6 +13,18 @@ def load_model(model_path='best_solar_pinn_ideal.pth'):
     except Exception as e:
         raise RuntimeError(f"Error loading model: {str(e)}")
 
+def prepare_input(latitude, longitude, time, slope, aspect):
+    """Prepare normalized input for PINN model."""
+    # Normalize inputs to [-1, 1] range
+    lat_norm = latitude / 90.0
+    lon_norm = longitude / 180.0
+    time_norm = time / 24.0
+    slope_norm = slope / 180.0
+    aspect_norm = aspect / 360.0
+    
+    # Stack inputs into tensor
+    return torch.stack([lat_norm, lon_norm, time_norm, slope_norm, aspect_norm], dim=0).float()
+
 def create_surface_plot(model, latitude, longitude, time, resolution=30):
     """Create interactive 3D surface plot of solar panel efficiency using Plotly."""
     try:
@@ -32,21 +44,18 @@ def create_surface_plot(model, latitude, longitude, time, resolution=30):
         # Initialize results tensor
         efficiency_map = torch.zeros((resolution, resolution), dtype=torch.float32)
         
-        # Calculate efficiency for each point using physics-based model
+        # Calculate efficiency for each point using PINN model predictions
         for i in range(resolution):
             for j in range(resolution):
-                # Calculate irradiance first
-                irradiance = physics_model.calculate_irradiance(
-                    latitude=latitude,
-                    time=time,
-                    slope=slopes[i],
-                    panel_azimuth=aspects[j]
-                )
-                # Calculate efficiency using the irradiance
+                # First get predicted irradiance from PINN model
+                normalized_input = prepare_input(latitude, longitude, time, slopes[i], aspects[j])
+                predicted_irradiance = model(normalized_input.unsqueeze(0)).item() * physics_model.solar_constant
+                
+                # Calculate efficiency using predicted irradiance
                 efficiency = physics_model.calculate_efficiency(
                     latitude=latitude,
                     time=time,
-                    irradiance=irradiance,
+                    irradiance=predicted_irradiance,
                     slope=slopes[i],
                     panel_azimuth=aspects[j]
                 )

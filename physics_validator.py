@@ -59,8 +59,6 @@ class SolarPhysicsIdeal:
                            torch.where(is_polar_night, torch.full_like(sunset, float('inf')), sunset))
         
         return sunrise, sunset, is_polar_day, is_polar_night
-        
-        return sunrise, sunset
 
     def calculate_zenith_angle(self, latitude, declination, hour_angle):
         """Calculate the cosine of the solar zenith angle (cos θz)."""

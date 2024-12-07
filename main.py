@@ -202,10 +202,14 @@ def main():
     try:
         with torch.no_grad():
             hour = st.session_state['hour']
+            # Normalize day_of_year to [0,1] range
+            normalized_day = (day_of_year - 1) / 364  # Maps [1,365] to [0,1]
+            
             current_input = torch.tensor([[
                 latitude / 90,
                 longitude / 180,
                 hour / 24,
+                normalized_day,
                 0 / 180,  # Default slope
                 180 / 360  # Default aspect (south-facing)
             ]]).float()

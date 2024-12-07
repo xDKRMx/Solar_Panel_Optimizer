@@ -21,7 +21,8 @@ def generate_training_data(n_samples=2000, validation_split=0.2):
     
     # Generate other parameters
     longitude = (torch.rand(n_samples) * 360 - 180).requires_grad_()  # -180 to 180 degrees
-    time = (torch.rand(n_samples) * 24).requires_grad_()  # 0 to 24 hours
+    time = (torch.rand(n_samples) * 24).requires_grad_()  # 0 to 24 hours (just hours now)
+    day_of_year = (torch.floor(torch.rand(n_samples) * 365) + 1).requires_grad_()  # 1 to 365
     slope = (torch.rand(n_samples) * 45).requires_grad_()  # 0 to 45 degrees slope
     aspect = (torch.rand(n_samples) * 360).requires_grad_()  # 0 to 360 degrees aspect
     
@@ -29,11 +30,12 @@ def generate_training_data(n_samples=2000, validation_split=0.2):
     lat_norm = latitude / 90
     lon_norm = longitude / 180
     time_norm = time / 24
+    day_norm = (day_of_year - 1) / 364  # Normalize to [0,1]
     slope_norm = slope / 180
     aspect_norm = aspect / 360
     
     # Create normalized input tensor
-    x_data = torch.stack([lat_norm, lon_norm, time_norm, slope_norm, aspect_norm], dim=1).float()
+    x_data = torch.stack([lat_norm, lon_norm, time_norm, day_norm, slope_norm, aspect_norm], dim=1).float()
     
     # Calculate theoretical clear-sky irradiance using physics validator
     physics_model = SolarPhysicsIdeal()

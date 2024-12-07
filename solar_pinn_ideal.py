@@ -17,7 +17,7 @@ class PhysicsInformedLayer(nn.Module):
         return out
 
 class SolarPINN(nn.Module):
-    def __init__(self, input_dim=5):  # latitude, longitude, time, slope, aspect
+    def __init__(self, input_dim=6):  # latitude, longitude, time, day_of_year, slope, aspect
         super().__init__()
         self.setup_physical_constants()
         self.setup_network(input_dim)
@@ -144,20 +144,17 @@ class SolarPINN(nn.Module):
     def forward(self, x):
         """Forward pass with essential physics constraints using normalized inputs."""
         # Extract normalized input components
-        lat_norm, lon_norm, time_norm, slope_norm, aspect_norm = x.split(1, dim=1)
+        lat_norm, lon_norm, time_norm, day_norm, slope_norm, aspect_norm = x.split(1, dim=1)
         
         # Denormalize inputs for physics calculations
         lat = lat_norm * 90
         lon = lon_norm * 180
-        time = time_norm * 24
+        time = time_norm * 24  # Now represents only hours (0-24)
+        day_of_year = day_norm * 364 + 1  # Scale to [1, 365]
         slope = slope_norm * 180
         aspect = aspect_norm * 360
         
-        # Calculate day of year from denormalized time with boundary handling
-        day_of_year = torch.floor(time / 24 * 365)
-        # Ensure day_of_year is in valid range [1, 365]
-        day_of_year = torch.clamp(day_of_year, min=1, max=365)
-        hour_of_day = time % 24
+        hour_of_day = time  # Time now directly represents hours
         
         # Calculate solar position
         declination = self.calculate_declination(day_of_year)

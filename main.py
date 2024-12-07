@@ -152,7 +152,7 @@ def main():
         )
         st.session_state['hour'] = parse_time(
             selected_time)  # Convert to decimal hour
-
+ 
     with hour_col2:
         # Allow user to type directly
         selected_time_input = st.text_input(

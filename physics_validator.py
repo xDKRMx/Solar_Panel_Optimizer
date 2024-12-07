@@ -33,11 +33,15 @@ class SolarPhysicsIdeal:
         # cos(h) = -tan(φ)·tan(δ)
         cos_hour_angle = -torch.tan(lat_rad) * torch.tan(decl_rad)
         
-        # Clamp values to handle edge cases (polar days/nights)
-        cos_hour_angle = torch.clamp(cos_hour_angle, -1, 1)
+        # Identify polar conditions before clamping
+        is_polar_day = cos_hour_angle < -1  # Sun never sets
+        is_polar_night = cos_hour_angle > 1  # Sun never rises
+        
+        # Clamp values for regular calculations
+        cos_hour_angle_clamped = torch.clamp(cos_hour_angle, -1, 1)
         
         # Convert to hour angle in radians
-        hour_angle = torch.arccos(cos_hour_angle)
+        hour_angle = torch.arccos(cos_hour_angle_clamped)
         
         # Convert hour angle to hours
         # Sunrise = 12 - h/15, Sunset = 12 + h/15
@@ -47,14 +51,14 @@ class SolarPhysicsIdeal:
         sunset = 12 + hour_offset
         
         # Handle special cases for polar regions
-        is_polar_day = cos_hour_angle < -1  # Sun never sets
-        is_polar_night = cos_hour_angle > 1  # Sun never rises
+        # For polar day: sunrise = 0, sunset = 24 (all day sunlight)
+        # For polar night: sunrise = inf, sunset = inf (no sunlight)
+        sunrise = torch.where(is_polar_day, torch.zeros_like(sunrise), 
+                            torch.where(is_polar_night, torch.full_like(sunrise, float('inf')), sunrise))
+        sunset = torch.where(is_polar_day, torch.full_like(sunset, 24), 
+                           torch.where(is_polar_night, torch.full_like(sunset, float('inf')), sunset))
         
-        sunrise = torch.where(is_polar_day, torch.zeros_like(sunrise), sunrise)
-        sunset = torch.where(is_polar_day, torch.full_like(sunset, 24), sunset)
-        
-        sunrise = torch.where(is_polar_night, torch.full_like(sunrise, float('inf')), sunrise)
-        sunset = torch.where(is_polar_night, torch.full_like(sunset, float('inf')), sunset)
+        return sunrise, sunset, is_polar_day, is_polar_night
         
         return sunrise, sunset
 
@@ -141,13 +145,13 @@ class SolarPhysicsIdeal:
         day_of_year = torch.floor(time / 24 * 365)
         hour_of_day = time % 24
         
-        # Get sunrise and sunset times
-        sunrise, sunset = self.calculate_sunrise_sunset(latitude, day_of_year)
+        # Get sunrise and sunset times along with polar conditions
+        sunrise, sunset, is_polar_day, is_polar_night = self.calculate_sunrise_sunset(latitude, day_of_year)
         
-        # Check if current time is during daylight hours
-        is_daytime = (hour_of_day >= sunrise) & (hour_of_day <= sunset)
+        # Check if current time is during daylight hours, including polar day condition
+        is_daytime = is_polar_day | ((hour_of_day >= sunrise) & (hour_of_day <= sunset))
         
-        # Calculate solar position and irradiance only during daytime
+        # Calculate solar position regardless of time for polar days
         declination = self.calculate_declination(day_of_year)
         hour_angle = self.calculate_hour_angle(hour_of_day)
         cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)

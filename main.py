@@ -15,6 +15,10 @@ def format_time(decimal_hour):
     minutes = int((decimal_hour % 1) * 60)
     return f"{hours:02d}:{minutes:02d}"
 
+def time_to_decimal(hours, minutes):
+    """Convert hours and minutes to decimal hours."""
+    return hours + (minutes / 60)
+
 def main():
     st.title("Solar Panel Placement Optimizer")
     st.write("Physics-Informed Neural Network for Optimal Solar Panel Placement")
@@ -119,10 +123,10 @@ def main():
         hour = st.slider(
             "Hour of Day",
             min_value=0.0,
-            max_value=23.99,
+            max_value=23.983,  # 23:59
             value=st.session_state.get('hour', 12.0),
+            step=0.016667,  # 1 minute increment (1/60)
             key='hour_slider',
-            step=0.25,  # 15-minute intervals
             on_change=lambda: update_param('hour')
         )
         st.write(f"Selected time: {format_time(hour)}")
@@ -131,10 +135,10 @@ def main():
         hour = st.number_input(
             "Hour Value",
             min_value=0.0,
-            max_value=23.99,
+            max_value=23.983,  # 23:59
             value=st.session_state.get('hour', 12.0),
             key='hour_input',
-            step=0.25,
+            step=0.016667,  # 1 minute increment (1/60)
             label_visibility="collapsed",
             on_change=lambda: update_param('hour')
         )

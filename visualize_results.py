@@ -35,18 +35,24 @@ def create_surface_plot(model, latitude, longitude, time, resolution=30):
         # Calculate efficiency for each point using physics-based model
         for i in range(resolution):
             for j in range(resolution):
-                # Calculate irradiance first
-                irradiance = physics_model.calculate_irradiance(
-                    latitude=latitude,
-                    time=time,
-                    slope=slopes[i],
-                    panel_azimuth=aspects[j]
-                )
-                # Calculate efficiency using the predicted irradiance
+                # Use the PINN model to predict irradiance
+                input_tensor = torch.stack([
+                    latitude.expand(1),
+                    longitude.expand(1),
+                    time.expand(1),
+                    slopes[i].expand(1),
+                    aspects[j].expand(1),
+                    torch.ones(1),  # atmospheric transmission
+                    torch.zeros(1), # cloud cover
+                    torch.ones(1)   # wavelength
+                ], dim=1)
+                predicted_irradiance = model(input_tensor).squeeze() * physics_model.solar_constant
+
+                # Calculate efficiency using the PINN-predicted irradiance
                 efficiency = physics_model.calculate_efficiency(
                     latitude=latitude,
                     time=time,
-                    predicted_irradiance=irradiance,
+                    predicted_irradiance=predicted_irradiance,
                     slope=slopes[i],
                     panel_azimuth=aspects[j]
                 )

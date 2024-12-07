@@ -96,12 +96,13 @@ class SolarPhysicsIdeal:
         """
         return ambient_temp + (irradiance / 800) * (self.noct - 20)
 
-    def calculate_efficiency(self, latitude, time, slope=0, panel_azimuth=0, ref_efficiency=0.15, ambient_temp=25):
-        """Calculate temperature-corrected solar panel efficiency.
+    def calculate_efficiency(self, latitude, time, irradiance, slope=0, panel_azimuth=0, ref_efficiency=0.15, ambient_temp=25):
+        """Calculate temperature-corrected solar panel efficiency using provided irradiance.
         
         Args:
             latitude: Location latitude in degrees
             time: Time of day (hour)
+            irradiance: Solar irradiance in W/m² (from PINN model)
             slope: Panel slope angle in degrees (β)
             panel_azimuth: Panel azimuth angle in degrees (φp)
             ref_efficiency: Reference efficiency under STC (default 0.15 or 15%)
@@ -113,6 +114,7 @@ class SolarPhysicsIdeal:
         # Convert inputs to tensors
         latitude = torch.as_tensor(latitude, dtype=torch.float32)
         time = torch.as_tensor(time, dtype=torch.float32)
+        irradiance = torch.as_tensor(irradiance, dtype=torch.float32)
         slope = torch.as_tensor(slope, dtype=torch.float32)
         panel_azimuth = torch.as_tensor(panel_azimuth, dtype=torch.float32)
         ambient_temp = torch.as_tensor(ambient_temp, dtype=torch.float32)
@@ -121,24 +123,17 @@ class SolarPhysicsIdeal:
         day_of_year = torch.floor(time / 24 * 365)
         hour_of_day = time % 24
         
-        # Calculate solar position
+        # Calculate solar position for surface orientation
         declination = self.calculate_declination(day_of_year)
         hour_angle = self.calculate_hour_angle(hour_of_day)
-        
-        # Calculate zenith angle
         cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)
         cos_zenith = torch.clamp(cos_zenith, min=0.0)
-        
-        # Calculate irradiance
-        air_mass = self.calculate_air_mass(cos_zenith)
-        transmission = self.calculate_atmospheric_transmission(air_mass)
-        irradiance = self.solar_constant * cos_zenith * transmission
         
         # Calculate surface orientation factor
         sun_azimuth = torch.rad2deg(hour_angle)
         fsurt = self.calculate_surface_orientation_factor(cos_zenith, slope, sun_azimuth, panel_azimuth)
         
-        # Calculate cell temperature
+        # Calculate cell temperature using provided irradiance
         cell_temp = self.calculate_cell_temperature(ambient_temp, irradiance)
         
         # Calculate temperature correction factor

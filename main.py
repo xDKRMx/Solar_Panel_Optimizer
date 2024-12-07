@@ -123,9 +123,9 @@ def main():
             value=st.session_state.get('hour', 12.0),
             key='hour_slider',
             step=0.25,  # 15-minute intervals
-            format=format_time,
             on_change=lambda: update_param('hour')
         )
+        st.write(f"Selected time: {format_time(hour)}")
     with hour_col2:
         st.write("")
         hour = st.number_input(

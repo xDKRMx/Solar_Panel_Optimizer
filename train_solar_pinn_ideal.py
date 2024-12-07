@@ -78,7 +78,7 @@ def main():
     x_train, y_train, x_val, y_val = generate_training_data()
     
     # Enhanced training parameters
-    n_epochs = 300  # Increased epochs for better convergence
+    n_epochs = 200  # Modified number of epochs as requested
     batch_size = 128  # Larger batch size for stable training
     n_batches = len(x_train) // batch_size
     best_val_loss = float('inf')

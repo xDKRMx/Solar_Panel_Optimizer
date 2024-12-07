@@ -118,32 +118,43 @@ def main():
     
     # Hour of Day input with slider and number input
     hour_col1, hour_col2 = st.sidebar.columns([3, 1])
+    
+    # Convert hour to total minutes for the slider
+    total_minutes = int(st.session_state.get('hour', 12.0) * 60)
+
+    # Create slider using minutes (0-1439 = 23h59m)
     with hour_col1:
-        hour = st.slider(
-            "Hour of Day", 0.0, 24.0,
-            value=st.session_state.get('hour', 12.0),
+        total_minutes = st.slider(
+            "Hour of Day",
+            min_value=0,
+            max_value=1439,
+            value=total_minutes,
+            step=1,
             key='hour_slider',
-            step=1/60,  # One minute steps
-            format="%.2f",  # Show only 2 decimal places
+            format=lambda x: f"{x//60:02d}:{x%60:02d}",  # Format as HH:MM
             on_change=lambda: update_param('hour')
         )
-        st.write(f"Current time: {decimal_to_hhmm(hour)}")  # Display formatted time separately
+        # Convert minutes back to decimal hours for internal use
+        hour = total_minutes / 60.0
+        st.session_state['hour'] = hour
+
+    # Update text input to handle HH:MM format
     with hour_col2:
         st.write("")
-        current_hour = st.session_state.get('hour', 12.0)
-        hour_str = decimal_to_hhmm(current_hour)
+        hour_str = f"{int(hour):02d}:{int((hour % 1) * 60):02d}"
         hour_input = st.text_input(
             "Hour of Day Value",
-            value=str(hour_str),  # Convert to string explicitly
+            value=hour_str,
             key='hour_input',
             label_visibility="collapsed"
         )
         try:
             if hour_input != hour_str:  # Only update if changed
-                hour = hhmm_to_decimal(hour_input)
-                if 0 <= hour <= 24:
-                    st.session_state['hour'] = hour
-                    st.session_state['hour_slider'] = hour
+                h, m = map(int, hour_input.split(':'))
+                if 0 <= h <= 23 and 0 <= m <= 59:
+                    new_hour = h + m/60
+                    st.session_state['hour'] = new_hour
+                    st.session_state['hour_slider'] = int(new_hour * 60)
         except ValueError:
             st.error("Please enter time in HH:MM format")
     

@@ -22,16 +22,19 @@ def decimal_hours_to_time(hours):
     hour = int(hours)
     minute = int((hours - hour) * 60)
     return datetime.time(hour, minute)
-    def update_param(param_name):
-        if f'{param_name}_slider' in st.session_state and f'{param_name}_input' in st.session_state:
-            if param_name == 'hour':
-                time_value = st.session_state[f'{param_name}_slider']
-                decimal_hours = time_to_decimal_hours(time_value)
-                st.session_state[param_name] = decimal_hours
-            else:
-                value = st.session_state[f'{param_name}_slider']
-                st.session_state[f'{param_name}_input'] = value
-                st.session_state[param_name] = value
+
+def update_param(param_name):
+    if param_name == 'hour':
+        if 'hour_slider' in st.session_state:
+            time_value = st.session_state['hour_slider']
+            decimal_hours = time_to_decimal_hours(time_value)
+            st.session_state['hour'] = decimal_hours
+            st.session_state['hour_input'] = time_value
+    else:
+        if f'{param_name}_slider' in st.session_state:
+            value = st.session_state[f'{param_name}_slider']
+            st.session_state[f'{param_name}_input'] = value
+            st.session_state[param_name] = value
 
     # Initialize session state
     if 'latitude' not in st.session_state:
@@ -140,7 +143,7 @@ def decimal_hours_to_time(hours):
             value=decimal_hours_to_time(st.session_state.get('hour', 12.0)),
             key='hour_input',
             label_visibility="collapsed",
-            step=60  # 1 minute steps
+            on_change=lambda: update_param('hour')
         )
         
     # Convert time input to decimal hours for calculations

@@ -176,15 +176,23 @@ class SolarPhysicsIdeal:
         adj_ambient_temp = self.calculate_seasonal_ambient_temp(ambient_temp, day_of_year, latitude)
         adj_noct = self.calculate_seasonal_noct(day_of_year, latitude)
         
-        # Enhanced temperature calculation considering irradiance and wind effects
+        # Enhanced temperature calculation with improved thermal model
         # Standard Test Conditions (STC) irradiance is 1000 W/m²
         irradiance_factor = irradiance / 1000
         
+        # Wind speed effect (simplified model)
+        # Assume higher wind speeds in winter, lower in summer
+        season_factor = torch.cos(2 * torch.pi * (day_of_year / 365))
+        wind_factor = 1.0 + 0.2 * season_factor  # ±20% variation
+        
         # Calculate cell temperature using improved NOCT method
-        # Temperature rise above ambient = (NOCT - 20°C) * (Irradiance/800) * (1 - η_thermal)
-        # η_thermal represents thermal losses (approximately 0.9)
-        thermal_efficiency = 0.9
-        temperature_rise = (adj_noct - 20) * (irradiance / 800) * (1 - thermal_efficiency)
+        # Temperature rise = (NOCT - 20°C) * (Irradiance/800) * (1 - η_thermal) * wind_factor
+        # η_thermal represents thermal losses (temperature dependent)
+        base_thermal_efficiency = 0.9
+        thermal_efficiency = base_thermal_efficiency - 0.002 * (adj_ambient_temp - 25)  # Temperature dependency
+        thermal_efficiency = torch.clamp(thermal_efficiency, min=0.85, max=0.95)
+        
+        temperature_rise = (adj_noct - 20) * (irradiance / 800) * (1 - thermal_efficiency) / wind_factor
         
         return adj_ambient_temp + temperature_rise
 
@@ -211,9 +219,14 @@ class SolarPhysicsIdeal:
         
         # Calculate day of year and time components with proper range handling
         day_of_year = torch.floor(time / 24 * 365)
-        # Ensure day_of_year is in valid range [1, 365]
         day_of_year = torch.clamp(day_of_year, min=1, max=365)
         hour_of_day = time % 24
+        
+        # Calculate base irradiance for cell temperature calculation
+        declination = self.calculate_declination(day_of_year)
+        hour_angle = self.calculate_hour_angle(hour_of_day)
+        cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)
+        cos_zenith = torch.clamp(cos_zenith, min=0.0)
         
         # Calculate solar position with seasonal variations
         declination = self.calculate_declination(day_of_year)

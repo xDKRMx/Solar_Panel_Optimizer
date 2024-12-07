@@ -124,9 +124,10 @@ def main():
             value=st.session_state.get('hour', 12.0),
             key='hour_slider',
             step=1/60,  # One minute steps
-            format=lambda x: decimal_to_hhmm(x),
+            format="%f",  # Use basic format
             on_change=lambda: update_param('hour')
         )
+        st.write(f"Current time: {decimal_to_hhmm(hour)}")  # Display formatted time separately
     with hour_col2:
         st.write("")
         current_hour = st.session_state.get('hour', 12.0)

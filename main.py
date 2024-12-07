@@ -124,7 +124,7 @@ def main():
             value=st.session_state.get('hour', 12.0),
             key='hour_slider',
             step=1/60,  # One minute steps
-            format="%f",  # Use basic format
+            format="%.2f",  # Show only 2 decimal places
             on_change=lambda: update_param('hour')
         )
         st.write(f"Current time: {decimal_to_hhmm(hour)}")  # Display formatted time separately
@@ -134,7 +134,7 @@ def main():
         hour_str = decimal_to_hhmm(current_hour)
         hour_input = st.text_input(
             "Hour of Day Value",
-            value=hour_str,
+            value=str(hour_str),  # Convert to string explicitly
             key='hour_input',
             label_visibility="collapsed"
         )

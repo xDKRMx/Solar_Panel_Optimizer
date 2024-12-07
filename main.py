@@ -123,9 +123,9 @@ def main():
         hour = st.slider(
             "Hour of Day",
             min_value=0.0,
-            max_value=23.983333,  # 23:59 in decimal (23 + 59/60)
+            max_value=23.983,  # 23:59
             value=st.session_state.get('hour', 12.0),
-            step=0.016667,  # Exactly 1 minute (1/60)
+            step=0.016667,  # 1 minute increment (1/60)
             key='hour_slider',
             on_change=lambda: update_param('hour')
         )
@@ -135,10 +135,10 @@ def main():
         hour = st.number_input(
             "Hour Value",
             min_value=0.0,
-            max_value=23.983333,  # 23:59 in decimal (23 + 59/60)
+            max_value=23.983,  # 23:59
             value=st.session_state.get('hour', 12.0),
             key='hour_input',
-            step=0.016667  # Exactly 1 minute (1/60)
+            step=0.016667,  # 1 minute increment (1/60)
             label_visibility="collapsed",
             on_change=lambda: update_param('hour')
         )

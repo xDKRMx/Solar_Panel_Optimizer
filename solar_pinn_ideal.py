@@ -153,8 +153,10 @@ class SolarPINN(nn.Module):
         slope = slope_norm * 180
         aspect = aspect_norm * 360
         
-        # Calculate day of year from denormalized time
+        # Calculate day of year from denormalized time with boundary handling
         day_of_year = torch.floor(time / 24 * 365)
+        # Ensure day_of_year is in valid range [1, 365]
+        day_of_year = torch.clamp(day_of_year, min=1, max=365)
         hour_of_day = time % 24
         
         # Calculate solar position

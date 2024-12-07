@@ -200,8 +200,10 @@ class SolarPhysicsIdeal:
         panel_azimuth = torch.as_tensor(panel_azimuth, dtype=torch.float32)
         ambient_temp = torch.as_tensor(ambient_temp, dtype=torch.float32)
         
-        # Calculate day of year and time components
+        # Calculate day of year and time components with proper range handling
         day_of_year = torch.floor(time / 24 * 365)
+        # Ensure day_of_year is in valid range [1, 365]
+        day_of_year = torch.clamp(day_of_year, min=1, max=365)
         hour_of_day = time % 24
         
         # Calculate solar position with seasonal variations

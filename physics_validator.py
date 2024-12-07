@@ -48,65 +48,25 @@ class SolarPhysicsIdeal:
             torch.cos(latitude_rad) * torch.cos(declination) * torch.cos(hour_angle)
         )
 
-    def calculate_air_mass(self, zenith_angle, day_of_year, latitude):
-        """Calculate air mass (M) with DOY effects and enhanced seasonal corrections."""
+    def calculate_air_mass(self, zenith_angle):
+        """Calculate air mass (M) using an enhanced model."""
         zenith_angle_deg = torch.rad2deg(torch.acos(zenith_angle))
-        
-        # Basic air mass calculation (Kasten-Young formula)
         basic_am = 1 / (torch.cos(torch.deg2rad(zenith_angle_deg)) +
                        0.50572 * (96.07995 - zenith_angle_deg) ** -1.6364)
-        
-        # Seasonal pressure correction
-        # Atmospheric pressure varies with season, affecting air mass
-        pressure_correction = 1.0 + 0.02 * torch.cos(2 * torch.pi * (day_of_year - 1) / 365)
-        
-        # Latitude-based seasonal correction
-        # Higher latitudes experience more significant seasonal variations
-        lat_rad = torch.deg2rad(latitude)
-        seasonal_lat_factor = 1.0 + 0.1 * torch.abs(torch.sin(lat_rad)) * \
-                            torch.cos(2 * torch.pi * (day_of_year - 1) / 365)
-        
-        # High latitude correction with seasonal component
         high_lat_correction = torch.where(
             zenith_angle_deg > 60,
-            1 + (zenith_angle_deg - 60) * 0.15 * seasonal_lat_factor / 30,
+            1 + (zenith_angle_deg - 60) * 0.15 / 30,
             torch.ones_like(zenith_angle_deg)
         )
-        
-        # Combined air mass calculation
-        air_mass = basic_am * pressure_correction / high_lat_correction
-        
+        air_mass = basic_am / high_lat_correction
         return torch.clamp(air_mass, min=1.0)
 
-    def calculate_atmospheric_transmission(self, air_mass, day_of_year):
-        """Calculate the atmospheric transmission factor (T) with seasonal variations."""
-        # Calculate seasonal variation factor (peaks at summer solstice)
-        seasonal_factor = 1.0 + 0.03 * torch.cos(2 * torch.pi * (day_of_year - 172) / 365)
-        
-        # Base atmospheric transmission with seasonal adjustment
-        base_transmission = torch.exp(-self.extinction_coefficient * air_mass * seasonal_factor)
-        
-        # Seasonal adjustments for different atmospheric components
-        summer_solstice = 172  # June 21st
-        winter_solstice = 355  # December 21st
-        
-        # Calculate seasonal weights
-        summer_weight = 0.5 + 0.5 * torch.cos(2 * torch.pi * (day_of_year - summer_solstice) / 365)
-        winter_weight = 1.0 - summer_weight
-        
-        # Seasonal Rayleigh scattering (stronger in winter due to denser atmosphere)
-        rayleigh_winter = torch.exp(-0.1083 * air_mass ** 0.84)  # Enhanced winter scattering
-        rayleigh_summer = torch.exp(-0.0903 * air_mass ** 0.84)  # Standard summer scattering
-        rayleigh = rayleigh_summer * summer_weight + rayleigh_winter * winter_weight
-        
-        # Seasonal aerosol effects (stronger in summer)
-        aerosol_summer = torch.exp(-0.1 * air_mass ** 0.95)  # Enhanced summer aerosols
-        aerosol_winter = torch.exp(-0.06 * air_mass ** 0.95)  # Reduced winter aerosols
-        aerosol = aerosol_summer * summer_weight + aerosol_winter * winter_weight
-        
-        # Ozone variation (stronger in spring/summer)
-        ozone = torch.exp(-0.0042 * air_mass ** 0.95 * seasonal_factor)
-        
+    def calculate_atmospheric_transmission(self, air_mass):
+        """Calculate the atmospheric transmission factor (T)."""
+        base_transmission = torch.exp(-self.extinction_coefficient * air_mass)
+        rayleigh = torch.exp(-0.0903 * air_mass ** 0.84)
+        aerosol = torch.exp(-0.08 * air_mass ** 0.95)
+        ozone = torch.exp(-0.0042 * air_mass ** 0.95)
         return base_transmission * rayleigh * aerosol * ozone
 
     def calculate_surface_orientation_factor(self, zenith_angle, slope, sun_azimuth, panel_azimuth):
@@ -169,29 +129,20 @@ class SolarPhysicsIdeal:
         cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)
         cos_zenith = torch.clamp(cos_zenith, min=0.0)
         
-        # Calculate irradiance with enhanced DOY effects
-        air_mass = self.calculate_air_mass(cos_zenith, day_of_year, latitude)
-        transmission = self.calculate_atmospheric_transmission(air_mass, day_of_year)
-        
-        # Enhanced seasonal solar constant variation
-        # Earth's elliptical orbit causes ~3.3% annual variation in solar radiation
-        orbital_factor = 1 + 0.033 * torch.cos(2 * torch.pi * (day_of_year - 2) / 365)
-        irradiance = self.solar_constant * orbital_factor * cos_zenith * transmission
+        # Calculate irradiance
+        air_mass = self.calculate_air_mass(cos_zenith)
+        transmission = self.calculate_atmospheric_transmission(air_mass)
+        irradiance = self.solar_constant * cos_zenith * transmission
         
         # Calculate surface orientation factor
         sun_azimuth = torch.rad2deg(hour_angle)
         fsurt = self.calculate_surface_orientation_factor(cos_zenith, slope, sun_azimuth, panel_azimuth)
         
-        # Calculate cell temperature with seasonal adjustments
+        # Calculate cell temperature
         cell_temp = self.calculate_cell_temperature(ambient_temp, irradiance)
         
-        # Seasonal adjustment to temperature coefficient
-        # Temperature coefficient typically becomes more negative at higher temperatures
-        seasonal_temp_factor = 1.0 + 0.1 * torch.cos(2 * torch.pi * (day_of_year - 172) / 365)
-        adjusted_temp_coeff = self.temp_coefficient * seasonal_temp_factor
-        
-        # Calculate temperature correction factor with seasonal adjustment
-        temp_correction = 1 + adjusted_temp_coeff * (cell_temp - self.ref_temperature)
+        # Calculate temperature correction factor
+        temp_correction = 1 + self.temp_coefficient * (cell_temp - self.ref_temperature)
         
         # Calculate total efficiency with temperature correction
         # η = ηref * fsurt * [1 + β * (Tc - Tref)]

@@ -96,13 +96,12 @@ class SolarPhysicsIdeal:
         """
         return ambient_temp + (irradiance / 800) * (self.noct - 20)
 
-    def calculate_efficiency(self, latitude, time, predicted_irradiance, slope=0, panel_azimuth=0, ref_efficiency=0.15, ambient_temp=25):
-        """Calculate temperature-corrected solar panel efficiency using predicted irradiance.
+    def calculate_efficiency(self, latitude, time, slope=0, panel_azimuth=0, ref_efficiency=0.15, ambient_temp=25):
+        """Calculate temperature-corrected solar panel efficiency.
         
         Args:
             latitude: Location latitude in degrees
             time: Time of day (hour)
-            predicted_irradiance: Predicted solar irradiance from the PINN model (W/m²)
             slope: Panel slope angle in degrees (β)
             panel_azimuth: Panel azimuth angle in degrees (φp)
             ref_efficiency: Reference efficiency under STC (default 0.15 or 15%)
@@ -110,41 +109,37 @@ class SolarPhysicsIdeal:
             
         Returns:
             Temperature-corrected total efficiency
-            
-        Raises:
-            ValueError: If predicted_irradiance is None or negative
         """
-        # Validate predicted irradiance
-        if predicted_irradiance is None:
-            raise ValueError("Predicted irradiance cannot be None")
-            
         # Convert inputs to tensors
         latitude = torch.as_tensor(latitude, dtype=torch.float32)
         time = torch.as_tensor(time, dtype=torch.float32)
         slope = torch.as_tensor(slope, dtype=torch.float32)
         panel_azimuth = torch.as_tensor(panel_azimuth, dtype=torch.float32)
         ambient_temp = torch.as_tensor(ambient_temp, dtype=torch.float32)
-        predicted_irradiance = torch.as_tensor(predicted_irradiance, dtype=torch.float32)
-        
-        if torch.any(predicted_irradiance < 0):
-            raise ValueError("Predicted irradiance cannot be negative")
         
         # Calculate day of year and time components
         day_of_year = torch.floor(time / 24 * 365)
         hour_of_day = time % 24
         
-        # Calculate solar position for surface orientation
+        # Calculate solar position
         declination = self.calculate_declination(day_of_year)
         hour_angle = self.calculate_hour_angle(hour_of_day)
+        
+        # Calculate zenith angle
         cos_zenith = self.calculate_zenith_angle(latitude, declination, hour_angle)
         cos_zenith = torch.clamp(cos_zenith, min=0.0)
+        
+        # Calculate irradiance
+        air_mass = self.calculate_air_mass(cos_zenith)
+        transmission = self.calculate_atmospheric_transmission(air_mass)
+        irradiance = self.solar_constant * cos_zenith * transmission
         
         # Calculate surface orientation factor
         sun_azimuth = torch.rad2deg(hour_angle)
         fsurt = self.calculate_surface_orientation_factor(cos_zenith, slope, sun_azimuth, panel_azimuth)
         
-        # Calculate cell temperature using predicted irradiance
-        cell_temp = self.calculate_cell_temperature(ambient_temp, predicted_irradiance)
+        # Calculate cell temperature
+        cell_temp = self.calculate_cell_temperature(ambient_temp, irradiance)
         
         # Calculate temperature correction factor
         temp_correction = 1 + self.temp_coefficient * (cell_temp - self.ref_temperature)

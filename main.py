@@ -67,58 +67,61 @@ def main():
     lat_col1, lat_col2 = st.sidebar.columns([3, 1])
     with lat_col1:
         latitude = st.slider("Latitude",
-                            -90.0,
-                            90.0,
-                            value=st.session_state.get('latitude', 45.0),
-                            key='latitude_slider',
-                            on_change=lambda: update_param('latitude'))
+                             -90.0,
+                             90.0,
+                             value=st.session_state.get('latitude', 45.0),
+                             key='latitude_slider',
+                             on_change=lambda: update_param('latitude'))
     with lat_col2:
         st.write("")
-        latitude = st.number_input("Latitude Value (Direct Input)",
-                                  -90.0,
-                                  90.0,
-                                  value=st.session_state.get('latitude', 45.0),
-                                  key='latitude_input',
-                                  label_visibility="collapsed",
-                                  on_change=lambda: update_param('latitude'))
+        latitude = st.number_input("Latitude Value",
+                                   -90.0,
+                                   90.0,
+                                   value=st.session_state.get(
+                                       'latitude', 45.0),
+                                   key='latitude_input',
+                                   label_visibility="collapsed",
+                                   on_change=lambda: update_param('latitude'))
 
     # Longitude input with slider and number input
     lon_col1, lon_col2 = st.sidebar.columns([3, 1])
     with lon_col1:
         longitude = st.slider("Longitude",
-                             -180.0,
-                             180.0,
-                             value=st.session_state.get('longitude', 0.0),
-                             key='longitude_slider',
-                             on_change=lambda: update_param('longitude'))
+                              -180.0,
+                              180.0,
+                              value=st.session_state.get('longitude', 0.0),
+                              key='longitude_slider',
+                              on_change=lambda: update_param('longitude'))
     with lon_col2:
         st.write("")
-        longitude = st.number_input("Longitude Value (Direct Input)",
-                                   -180.0,
-                                   180.0,
-                                   value=st.session_state.get('longitude', 0.0),
-                                   key='longitude_input',
-                                   label_visibility="collapsed",
-                                   on_change=lambda: update_param('longitude'))
+        longitude = st.number_input(
+            "Longitude Value",
+            -180.0,
+            180.0,
+            value=st.session_state.get('longitude', 0.0),
+            key='longitude_input',
+            label_visibility="collapsed",
+            on_change=lambda: update_param('longitude'))
 
     # Day of Year input with slider and number input
     day_col1, day_col2 = st.sidebar.columns([3, 1])
     with day_col1:
         day_of_year = st.slider("Day of Year",
-                               1,
-                               365,
-                               value=st.session_state.get('day_of_year', 182),
-                               key='day_of_year_slider',
-                               on_change=lambda: update_param('day_of_year'))
+                                1,
+                                365,
+                                value=st.session_state.get('day_of_year', 182),
+                                key='day_of_year_slider',
+                                on_change=lambda: update_param('day_of_year'))
     with day_col2:
         st.write("")
-        day_of_year = st.number_input("Day of Year Value (Direct Input)",
-                                     1,
-                                     365,
-                                     value=st.session_state.get('day_of_year', 182),
-                                     key='day_of_year_input',
-                                     label_visibility="collapsed",
-                                     on_change=lambda: update_param('day_of_year'))
+        day_of_year = st.number_input(
+            "Day of Year Value",
+            1,
+            365,
+            value=st.session_state.get('day_of_year', 182),
+            key='day_of_year_input',
+            label_visibility="collapsed",
+            on_change=lambda: update_param('day_of_year'))
 
     # Hour of Day input with slider and number input
     def generate_time_range():
@@ -147,14 +150,14 @@ def main():
             options=time_range,  # Use the generated time range
             value="12:00",  # Default to noon
         )
-        st.session_state['hour'] = parse_time(selected_time)  # Convert to decimal hour
+        st.session_state['hour'] = parse_time(
+            selected_time)  # Convert to decimal hour
  
     with hour_col2:
         # Allow user to type directly
         selected_time_input = st.text_input(
-            "Time Value (Direct Input)",
+            "",
             value=selected_time,  # Default matches slider
-            label_visibility="collapsed"
         )
         # Validate and update
         if selected_time_input in time_range:
@@ -206,7 +209,8 @@ def main():
                 0 / 180,  # Default slope
                 180 / 360  # Default aspect (south-facing)
             ]]).float()
-            predicted_irradiance = model(current_input).item() * model.solar_constant
+            predicted_irradiance = model(
+                current_input).item() * model.solar_constant
 
         # Calculate physics-based irradiance and efficiency
         lat_tensor = torch.tensor([latitude], dtype=torch.float32)
@@ -229,7 +233,8 @@ def main():
             st.write(f"Predicted Irradiance: {predicted_irradiance:.2f} W/m²")
         with col2:
             st.subheader("Physics Calculation")
-            st.write(f"Physics-based Irradiance: {physics_irradiance:.2f} W/m²")
+            st.write(
+                f"Physics-based Irradiance: {physics_irradiance:.2f} W/m²")
 
         # Calculate accuracy metrics with new formula and error handling
         try:

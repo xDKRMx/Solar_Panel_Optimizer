@@ -6,7 +6,7 @@ def load_model(model_path='best_solar_pinn_ideal.pth'):
     """Load the trained PINN model."""
     try:
         model = SolarPINN()
-        checkpoint = torch.load(model_path, weights_only=True)
+        checkpoint = torch.load(model_path)
         model.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
         return model

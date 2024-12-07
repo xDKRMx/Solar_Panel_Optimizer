@@ -236,11 +236,21 @@ def main():
             st.write(
                 f"Physics-based Irradiance: {physics_irradiance:.2f} W/m²")
 
-        # Calculate accuracy metrics
-        accuracy_ratio = min(predicted_irradiance, physics_irradiance) / max(
-            predicted_irradiance, physics_irradiance) * 100
-        relative_error = abs(predicted_irradiance -
-                             physics_irradiance) / physics_irradiance * 100
+        # Calculate accuracy metrics with new formula and error handling
+        try:
+            max_irradiance = max(predicted_irradiance, physics_irradiance)
+            if max_irradiance == 0:
+                accuracy_ratio = 100.0  # Set to 100% when both values are 0
+            else:
+                accuracy_ratio = (max_irradiance - abs(physics_irradiance - predicted_irradiance)) / max_irradiance * 100
+        except ZeroDivisionError:
+            accuracy_ratio = 100.0  # Handle any other division by zero cases
+
+        # Calculate relative error only when physics_irradiance is not zero
+        try:
+            relative_error = abs(predicted_irradiance - physics_irradiance) / physics_irradiance * 100 if physics_irradiance != 0 else 0.0
+        except ZeroDivisionError:
+            relative_error = 0.0  # Handle division by zero for relative error
 
         # Determine color based on accuracy ratio
         if accuracy_ratio > 85:

@@ -8,6 +8,13 @@ from solar_pinn_ideal import SolarPINN
 from physics_validator import SolarPhysicsIdeal
 from visualize_results import create_surface_plot, load_model
 
+
+def format_time(decimal_hour):
+    """Convert decimal hour to HH:MM format."""
+    hours = int(decimal_hour)
+    minutes = int((decimal_hour % 1) * 60)
+    return f"{hours:02d}:{minutes:02d}"
+
 def main():
     st.title("Solar Panel Placement Optimizer")
     st.write("Physics-Informed Neural Network for Optimal Solar Panel Placement")
@@ -110,19 +117,25 @@ def main():
     hour_col1, hour_col2 = st.sidebar.columns([3, 1])
     with hour_col1:
         hour = st.slider(
-            "Hour of Day", 0.0, 24.0,
+            "Hour of Day",
+            min_value=0.0,
+            max_value=23.99,
             value=st.session_state.get('hour', 12.0),
             key='hour_slider',
-            step=0.1,
+            step=0.25,  # 15-minute intervals
+            format=format_time,
             on_change=lambda: update_param('hour')
         )
     with hour_col2:
         st.write("")
         hour = st.number_input(
-            "Hour of Day Value", 0.0, 24.0,
+            "Hour Value",
+            min_value=0.0,
+            max_value=23.99,
             value=st.session_state.get('hour', 12.0),
             key='hour_input',
-            step=0.1,
+            step=0.25,
+            format="%02d:%02d",
             label_visibility="collapsed",
             on_change=lambda: update_param('hour')
         )

@@ -1,68 +1,32 @@
+
 modules = ["python-3.11"]
 
 [nix]
 channel = "stable-24_05"
 
-[workflows]
-runButton = "Project"
-
-[[workflows.workflow]]
-name = "Streamlit App"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "streamlit run main.py --server.port 5000 --server.address 0.0.0.0"
-waitForPort = 5000
-
-[[workflows.workflow]]
-name = "Streamlit App"
-mode = "parallel"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "streamlit run main.py --server.port 5000 --server.address 0.0.0.0"
-waitForPort = 5000
-
-[[workflows.workflow]]
-name = "Project"
-mode = "parallel"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Train Model"
-
-[[workflows.workflow]]
-name = "Train Model"
-author = "agent"
-
-[workflows.workflow.metadata]
-agentRequireRestartOnSave = false
-
-[[workflows.workflow.tasks]]
-task = "packager.installForAll"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python train_solar_pinn_ideal.py"
-
 [deployment]
-run = ["sh", "-c", "streamlit run main.py --server.port 5000 --server.address 0.0.0.0"]
+run = ["sh", "-c", "streamlit run main.py --server.address 0.0.0.0 --server.port 8080"]
+deploymentTarget = "cloudrun"
+ignorePorts = false
 
 [[ports]]
-localPort = 5000
+localPort = 8080
 externalPort = 80
+
+[env]
+PYTHONPATH = "${PYTHONPATH}:${REPL_HOME}"
+
+[[workflows.workflow]]
+name = "Streamlit App"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "streamlit run main.py --server.port 5000 --server.address 0.0.0.0"
+waitForPort = 5000

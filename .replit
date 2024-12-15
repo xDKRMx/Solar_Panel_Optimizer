@@ -46,6 +46,10 @@ author = "agent"
 task = "workflow.run"
 args = "Train Model"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Streamlit App"
+
 [[workflows.workflow]]
 name = "Train Model"
 author = "agent"
